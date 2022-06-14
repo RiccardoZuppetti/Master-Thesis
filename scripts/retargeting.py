@@ -14,6 +14,7 @@ from adherent.data_processing import motion_data_retargeter
 from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import TargetType
 from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import InverseKinematicsNLP
 
+
 # ==================
 # USER CONFIGURATION
 # ==================
@@ -90,10 +91,6 @@ icub = utils.iCub(world=world, urdf=icub_urdf)
 gazebo.gui()
 gazebo.run(paused=True)
 
-# Create a KinDynComputations object
-kindyn = kindyncomputations.KinDynComputations(model_file=icub_urdf, considered_joints=icub.joint_names())
-kindyn.set_robot_state_from_model(model=icub, world_gravity=np.array(world.gravity()))
-
 # ==========================
 # INVERSE KINEMATICS SETTING
 # ==========================
@@ -101,62 +98,29 @@ kindyn.set_robot_state_from_model(model=icub, world_gravity=np.array(world.gravi
 # Get the controlled joints
 controlled_joints = icub.joint_names()
 
-# Create the IK object
-ik = InverseKinematicsNLP(urdf_filename=icub_urdf,
-                          considered_joints=controlled_joints,
-                          joint_serialization=controlled_joints)
-
-# Initialize IK
-ik.initialize(verbosity=1,
-              constraints_tolerance=1e-8,
-              cost_tolerance=1e-4,
-              floating_base=True)
-
-# Add base pose target as a constraint
-ik.add_target(frame_name="data_Pelvis", target_type=TargetType.POSE, as_constraint=True)
-
-# Add link orientation targets
-target_links = ['data_T8', 'data_Head', 'data_RightUpperLeg', 'data_RightLowerLeg', 'data_RightFoot',
-                'data_RightUpperArm', 'data_RightForeArm', 'data_LeftUpperLeg', 'data_LeftLowerLeg',
-                'data_LeftFoot', 'data_LeftUpperArm', 'data_LeftForeArm']
-for link in target_links:
-    ik.add_target(frame_name=link, target_type=TargetType.ROTATION)
-
 # ===========
 # RETARGETING
 # ===========
-
-# Define robot-specific feet vertices positions in the foot frame
-local_foot_vertices_pos = utils.define_foot_vertices(robot="iCubV2_5")
 
 # Define robot-specific quaternions from the robot base frame to the target base frame
 robot_to_target_base_quat = utils.define_robot_to_target_base_quat(robot="iCubV2_5")
 
 # Instantiate the retargeter
-if kinematically_feasible_base_retargeting:
-    retargeter = motion_data_retargeter.KFWBGR.build(motiondata=motiondata,
-                                                     metadata=metadata,
-                                                     ik=ik,
-                                                     mirroring=mirroring,
-                                                     horizontal_feet=horizontal_feet,
-                                                     straight_head=straight_head,
-                                                     robot_to_target_base_quat=robot_to_target_base_quat,
-                                                     kindyn=kindyn,
-                                                     local_foot_vertices_pos=local_foot_vertices_pos)
-else:
-    retargeter = motion_data_retargeter.WBGR.build(motiondata=motiondata,
-                                                   metadata=metadata,
-                                                   ik=ik,
-                                                   mirroring=mirroring,
-                                                   horizontal_feet=horizontal_feet,
-                                                   straight_head=straight_head,
-                                                   robot_to_target_base_quat=robot_to_target_base_quat)
+
+retargeter = motion_data_retargeter.WBGR.build(icub_urdf=icub_urdf,
+                                               motiondata=motiondata,
+                                               metadata=metadata,
+                                               controlled_joints=controlled_joints,
+                                               mirroring=mirroring,
+                                               horizontal_feet=horizontal_feet,
+                                               straight_head=straight_head,
+                                               robot_to_target_base_quat=robot_to_target_base_quat)
+# Configure the retargeter
+
+retargeter.configure()
 
 # Retrieve ik solutions
-if kinematically_feasible_base_retargeting:
-    timestamps, ik_solutions = retargeter.KF_retarget()
-else:
-    timestamps, ik_solutions = retargeter.retarget()
+timestamps, ik_solutions = retargeter.retarget()
 
 # =============
 # STORE AS JSON
