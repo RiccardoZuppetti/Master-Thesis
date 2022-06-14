@@ -3,7 +3,8 @@
 
 import numpy as np
 from typing import List, Dict
-from dataclasses import dataclass
+import manifpy as manif
+from dataclasses import dataclass, field
 from gym_ignition.rbd.idyntree import numpy
 from adherent.data_processing import utils
 from gym_ignition.rbd.conversions import Rotation
@@ -13,6 +14,11 @@ from adherent.data_processing import motion_data
 from gym_ignition.rbd.idyntree import kindyncomputations
 from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import IKSolution
 from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import InverseKinematicsNLP
+import bipedal_locomotion_framework.bindings as blf
+from adherent.data_processing.utils import Integrator
+from adherent.data_processing.utils import synchronize
+from adherent.data_processing.utils import world_gravity
+import time
 
 
 @dataclass
@@ -193,17 +199,164 @@ class IKTargets:
 
 
 @dataclass
+class IKElement:
+    """Class for the inverse kinematics IK"""
+
+    # Inverse kinematics
+    ik_element: blf.ik.QPInverseKinematics
+
+    # Dictionary
+    temp_dict: Dict
+
+    # Task for the pose (IK)
+    pose_se3_task: blf.ik.SE3Task = field(default_factory=lambda: blf.ik.SE3Task())
+
+    @staticmethod
+    def build(motiondata: motion_data.MotionData) -> "IKElement":
+        """Build an instance of IKElement"""
+
+        # Set ik parameters
+        ik_element_param_handler = blf.parameters_handler.StdParametersHandler()
+        ik_element_param_handler.set_parameter_string(name="robot_velocity_variable_name", value="robotVelocity")
+
+        # Initialize ik element
+        ik_element = blf.ik.QPInverseKinematics()
+        assert ik_element.initialize(handler=ik_element_param_handler)
+
+        temp_dict = {}
+
+        for link in motiondata.Links:
+            orientation_so3_task: blf.ik.SO3Task = blf.ik.SO3Task()
+            temp_dict[link['name']] = orientation_so3_task
+
+        return IKElement(ik_element=ik_element, temp_dict=temp_dict)
+
+    def configure_pose_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
+        """Configure pose task"""
+
+        # Configure pose task
+        pose_se3_param_handler = blf.parameters_handler.StdParametersHandler()
+        pose_se3_param_handler.set_parameter_string(name="robot_velocity_variable_name", value="robotVelocity")
+        pose_se3_param_handler.set_parameter_string(name="frame_name", value="data_Pelvis")
+        pose_se3_param_handler.set_parameter_float(name="kp_linear", value=7.5)
+        pose_se3_param_handler.set_parameter_float(name="kp_angular", value=10.0)
+        assert self.pose_se3_task.set_kin_dyn(kindyn)
+        assert self.pose_se3_task.initialize(param_handler=pose_se3_param_handler)
+        pose_se3_var_handler = blf.system.VariablesHandler()
+        assert pose_se3_var_handler.add_variable("robotVelocity", len(joints_list) + 6) is True
+        assert self.pose_se3_task.set_variables_handler(variables_handler=pose_se3_var_handler)
+
+        # Add pose SE3 task as hard constraint
+        assert self.ik_element.add_task(task=self.pose_se3_task, taskName="pose_se3_task", priority=0)
+
+    def configure_orientation_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
+        """Configure orientation SO3 task and add it as soft constraint."""
+
+        # Configure SO3 Tasks
+        for key in self.temp_dict.keys():
+            
+            # Skip the base
+            if key == "Pelvis":
+                continue
+            
+            orientation_so3_param_handler = blf.parameters_handler.StdParametersHandler()
+            orientation_so3_param_handler.set_parameter_string(name="robot_velocity_variable_name", value="robotVelocity")
+            orientation_so3_param_handler.set_parameter_string(name="frame_name", value=f"data_{key}")
+            orientation_so3_param_handler.set_parameter_float(name="kp_angular", value=10.0)
+            assert self.temp_dict[key].set_kin_dyn(kindyn)
+            assert self.temp_dict[key].initialize(param_handler=orientation_so3_param_handler)
+            orientation_so3_var_handler = blf.system.VariablesHandler()
+            assert orientation_so3_var_handler.add_variable("robotVelocity", len(joints_list) + 6) is True
+            assert self.temp_dict[key].set_variables_handler(variables_handler=orientation_so3_var_handler)
+
+            # Add orientation SO3 task as soft constraint
+            assert self.ik_element.add_task(task=self.temp_dict[key], taskName=f"orientation_so3_task_{key}", priority=1, weight=[10, 10, 10])
+
+    def finalize_ik(self, joints_list: List) -> None:
+        """Once all the tasks have been added, finalize the ik."""
+
+        # Finalize the inverse kinematics
+        ik_element_var_handler = blf.system.VariablesHandler()
+        assert ik_element_var_handler.add_variable("robotVelocity", len(joints_list) + 6) is True
+        assert self.ik_element.finalize(handler=ik_element_var_handler)
+
+    def set_pose_set_point(self, target_base_position: np.ndarray, target_base_quaternion: np.ndarray):
+        """Set set point for the pose SE3 task"""
+
+        I_H_F = manif.SE3(position=target_base_position, quaternion=target_base_quaternion)
+        mixed_velocity = manif.SE3Tangent([0.0] * 6)
+        assert self.pose_se3_task.set_set_point(I_H_F=I_H_F, mixed_velocity=mixed_velocity)
+
+    def set_orientation_set_point(self, target_link_quaternion: np.ndarray, temp_link: str):
+        """Set set point for the orientation SO3 task"""
+
+        original_quaternion = utils.to_xyzw(target_link_quaternion)
+        I_R_F = manif.SO3(quaternion=original_quaternion)
+        angularVelocity = manif.SO3Tangent([0.0] * 3)
+        assert self.temp_dict[temp_link].set_set_point(I_R_F=I_R_F, angular_velocity=angularVelocity)
+
+    def solve_ik(self) -> np.array:
+        """Solve the ik problem and return the solution (desired joint velocities)."""
+
+        try:
+            # Solve the inverse kinematics
+            assert self.ik_element.advance()
+        except:
+            # If IK fails to find a solution, trajectory tracking is interrupted
+            print("IK solution not found. Trajectory tracking interrupted.")
+
+        # Get the inverse kinematics output
+        ik_state = self.ik_element.get_output()
+        assert self.ik_element.is_output_valid()
+
+        return ik_state.joint_velocity
+
+
+@dataclass
 class WBGR:
     """Class implementing the Whole-Body Geometric Retargeting (WBGR)."""
 
+    # Robot model and joints
+    icub_urdf: str
+    joints_list: List
+
+    # Components of WBGR
     ik_targets: IKTargets
-    ik: InverseKinematicsNLP
+    ik: IKElement
     robot_to_target_base_quat: List
+    joints_integrator: Integrator = None
+
+    # Kindyn descriptor
+    kindyn_des_desc: blf.floating_base_estimators.KinDynComputationsDescriptor = None
+
+    # Desired quantities
+    joints_values_des: np.array = field(default_factory=lambda: np.array([]))
+    joints_velocities_des: np.array = field(default_factory=lambda: np.array([]))
+
+    # Measured quantities
+    temp_initial_velocities: np.array = np.zeros(32)
+    joints_values: np.array = np.array([0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,
+                              0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,
+                              0.1388792845, 0.0, 0.0,
+                              -0.0629, 0.4397, 0.1825, 0.5387, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0,
+                              -0.0629, 0.4397, 0.1825, 0.5387, 0.0, 0.0, 0.0])
+
+    # Other parameters
+    dt: float = 0.01
+
+    # Base parameters
+    base_twist = [0] * 6
+    initial_rotation_matrix = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    initial_position = [0, 0, 0.53]
+    last_row = [0, 0, 0, 1]
+    world_H_base = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
     @staticmethod
-    def build(motiondata: motion_data.MotionData,
+    def build(icub_urdf: str,
+              motiondata: motion_data.MotionData,
               metadata: motion_data.MocapMetadata,
-              ik: InverseKinematicsNLP,
+              controlled_joints: List,
               mirroring: bool = False,
               horizontal_feet: bool = False,
               straight_head: bool = False,
@@ -212,6 +365,9 @@ class WBGR:
 
         # Instantiate IKTargets
         ik_targets = IKTargets.build(motiondata=motiondata, metadata=metadata)
+
+        # Instantiate IKElement
+        ik = IKElement.build(motiondata=motiondata)
 
         if mirroring:
             # Mirror the ik targets
@@ -225,23 +381,109 @@ class WBGR:
             # Enforce straight head
             ik_targets.enforce_straight_head()
 
-        return WBGR(ik_targets=ik_targets, ik=ik, robot_to_target_base_quat=robot_to_target_base_quat)
+        return WBGR(icub_urdf=icub_urdf, joints_list=controlled_joints, ik_targets=ik_targets, ik=ik, robot_to_target_base_quat=robot_to_target_base_quat)
+
+    # =============
+    # CONFIGURATION
+    # =============
+
+    def configure(self) -> None:
+        """Configure the entire pipeline."""
+
+        # Configure the kindyn descriptors
+        self.configure_kindyn_descriptors()
+
+        # Retrieve initial rotation matrix
+        initial_r = Rotation.from_quat(self.ik_targets.base_pose_targets['orientations'][0])
+        self.initial_rotation_matrix = initial_r.as_matrix()
+
+        # Rotate the rotation matrix by 180 degrees
+        self.rotateMatrix()
+
+        # Initialize the transformation matrix
+        self.setupTransformationMatrix()
+
+        # Configure the robot state
+        assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, self.joints_values, self.base_twist, self.temp_initial_velocities, world_gravity())
+
+        # Configure the inverse kinematics
+        self.configure_blf_ik()
+
+        # Configure the integrator from joint velocities to joint positions
+        self.configure_joints_integrator()
+
+    def rotateMatrix(self) -> None:
+        """ Rotate the matrix by 180 degrees"""
+
+        N = len(self.initial_rotation_matrix)
+
+        # rotate the matrix by 180 degrees
+        for i in range(N // 2):
+            for j in range(N):
+                temp = self.initial_rotation_matrix[i][j]
+                self.initial_rotation_matrix[i][j] = self.initial_rotation_matrix[N - i - 1][N - j - 1]
+                self.initial_rotation_matrix[N - i - 1][N - j - 1] = temp
+
+        # handle the case when the matrix has odd dimensions
+        if N % 2 == 1:
+            for j in range(N // 2):
+                temp = self.initial_rotation_matrix[N // 2][j]
+                self.initial_rotation_matrix[N // 2][j] = self.initial_rotation_matrix[N // 2][N - j - 1]
+                self.initial_rotation_matrix[N // 2][N - j - 1] = temp
+
+    def setupTransformationMatrix(self) -> None:
+        """Initialize the transformation matrix"""
+
+        M = len(self.world_H_base)
+        N = len(self.initial_rotation_matrix)
+
+        for i in range(M):
+            self.world_H_base[3][i] = self.last_row[i]
+
+        for i in range(N):
+            self.world_H_base[i][3] = self.initial_position[i]
+
+        for i in range(N):
+            for j in range(N):
+                self.world_H_base[i][j] = self.initial_rotation_matrix[i][j]
+
+    def configure_kindyn_descriptors(self) -> None:
+        """Setup the kindyn descriptor for desired values."""
+
+        # create KinDynComputationsDescriptor
+        kindyn_des_handler = blf.parameters_handler.StdParametersHandler()
+        kindyn_des_handler.set_parameter_string("model_file_name", self.icub_urdf)
+        kindyn_des_handler.set_parameter_vector_string("joints_list", self.joints_list)
+        self.kindyn_des_desc = blf.floating_base_estimators.construct_kindyncomputations_descriptor(kindyn_des_handler)
+        assert self.kindyn_des_desc.is_valid()
+        self.kindyn_des_desc.kindyn.set_floating_base("root_link")
+
+    def configure_blf_ik(self) -> None:
+        """Setup the inverse kinematics by adding tasks and setting fixed set points."""
+
+        # Configure pose task
+        self.ik.configure_pose_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
+
+        # Configure orientation task
+        self.ik.configure_orientation_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
+
+        # Finalize the ik
+        self.ik.finalize_ik(joints_list=self.joints_list)
+
+    def configure_joints_integrator(self) -> None:
+        """Initialize the integrator for the joint references."""
+
+        self.joints_integrator = Integrator.build(joints_initial_position=self.joints_values, dt=self.dt)
+
+    # ========
+    # RETARGET
+    # ========
 
     def retarget(self) -> (List, List):
         """Apply Whole-Body Geometric Retargeting (WBGR)."""
 
-        timestamps = []
         ik_solutions = []
-
-        # Initialize ik solution
-        ik_solution = IKSolution(base_position=self.ik_targets.base_pose_targets['positions'][0],
-                                 base_quaternion=utils.quaternion_multiply(
-                                     self.robot_to_target_base_quat,
-                                     self.ik_targets.base_pose_targets['orientations'][0]),
-                                 joint_configuration=np.array([0]*len(self.ik._joint_serialization)))
-
-        # Keep track of the frames jumped due to IK failure
-        jumped_frames = 0
+        timestamps = []
 
         for i in range(len(self.ik_targets.timestamps)):
 
@@ -254,11 +496,7 @@ class WBGR:
             # ==============
 
             # Base pose target
-            target_base_position = self.ik_targets.base_pose_targets['positions'][i]
-            target_base_quaternion = self.ik_targets.base_pose_targets['orientations'][i]
-            self.ik.update_transform_target(target_name="data_Pelvis",
-                                            position=target_base_position,
-                                            quaternion=target_base_quaternion)
+            self.ik.set_pose_set_point(target_base_position=self.ik_targets.base_pose_targets['positions'][i], target_base_quaternion=self.ik_targets.base_pose_targets['orientations'][i])
 
             # Link orientation targets
             for link, orientations in self.ik_targets.link_orientation_targets.items():
@@ -267,36 +505,26 @@ class WBGR:
                 if link == self.ik_targets.root_link:
                     continue
 
-                target_link_quaternion = orientations[i, :]
-                self.ik.update_rotation_target(target_name=f"data_{link}", quaternion=target_link_quaternion)
+                self.ik.set_orientation_set_point(target_link_quaternion=orientations[i, :], temp_link=link)
 
             # ========
             # SOLVE IK
             # ========
 
-            try:
+            # Retrieve joint velocities
+            self.joints_velocities_des = self.ik.solve_ik()
 
-                self.ik.solve()
+            temp_velocities = np.copy(self.joints_velocities_des)
 
-            except Exception as e:
+            # Retrieve joint positions
+            self.joints_integrator.advance(joints_velocity=self.joints_velocities_des)
+            self.joints_values_des = self.joints_integrator.get_joints_position()
 
-                print("Frame skipped due to Exception:", e)
-                jumped_frames += 1
+            temp_values = np.copy(self.joints_values_des)
 
-                # Reinitialize the IK initial guess in order to avoid parametrization-related singularities
-                reinitialized_ik_sol = IKSolution(base_position=self.ik_targets.base_pose_targets['positions'][i],
-                                                  base_quaternion=utils.quaternion_multiply(
-                                                      self.robot_to_target_base_quat,
-                                                      self.ik_targets.base_pose_targets['orientations'][i]),
-                                                  joint_configuration=np.array(ik_solution.joint_configuration))
-                self.ik.warm_start_from(reinitialized_ik_sol)
+            ik_solutions.append(temp_values)
 
-                continue
-
-            ik_solution = self.ik.get_full_solution()
-            ik_solutions.append(ik_solution)
-
-        print("Jumped", jumped_frames, "frames due to IK failures")
+            assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, temp_values, self.base_twist, temp_velocities, world_gravity())
 
         return timestamps, ik_solutions
 
@@ -435,7 +663,7 @@ class KinematicComputations:
 class KFWBGR(WBGR):
     """Class implementing the Kinematically-Feasible Whole-Body Geometric Retargeting (KFWBGR)."""
 
-    kinematic_computations: KinematicComputations
+    kinematic_computations: KinematicComputations = field(default_factory= lambda: KinematicComputations())
 
     @staticmethod
     def build(motiondata: motion_data.MotionData,
