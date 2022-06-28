@@ -154,6 +154,17 @@ def define_frontal_base_direction(robot: str) -> List:
 
     return frontal_base_direction
 
+def rotateMatrix(mat: List) -> List:
+    """Function to rotate a matrix by 180 degrees"""
+    N = len(mat)
+
+    for i in range(N // 2):
+        for j in range(N):
+            temp = mat[i][j]
+            mat[i][j] = mat[N - i - 1][N - j - 1]
+            mat[N - i - 1][N - j - 1] = temp
+
+
 def define_frontal_chest_direction(robot: str) -> List:
     """Define the robot-specific frontal chest direction in the chest frame."""
 
@@ -184,42 +195,17 @@ def visualize_retargeted_motion(timestamps: List,
 
     timestamp_prev = -1
 
-    '''
-    joints_values_temp: np.array = np.zeros(32)
-    temp_joints_integrator: Integrator = Integrator.build(joints_initial_position=joints_values_temp, dt=0.01)
-    temp_joints_integrator.advance(joints_velocity=ik_solutions)
-    joint_positions = temp_joints_integrator.get_joints_position()
-
-    icub.to_gazebo().reset_joint_positions(joint_positions, controlled_joints)
-    gazebo.run(paused=True)
-    '''
-    '''
-    joints_values_temp: np.array = np.zeros(32)
-    temp_joints_integrator: Integrator = Integrator.build(joints_initial_position=joints_values_temp, dt=0.01)
-    '''
-
     for i in range(1, len(ik_solutions)):
 
         ik_solution = ik_solutions[i]
 
-        '''
         # Retrieve the base pose and the joint positions, based on the type of ik_solution
-        if type(ik_solution) == IKSolution:
-            print(3333)
-            joint_positions = ik_solution.joint_configuration
-            # base_position = ik_solution.base_position
-            # base_quaternion = ik_solution.base_quaternion
-        elif type(ik_solution) == dict:
-            print(4444)
-            joint_positions = ik_solution["joint_positions"]
-            # base_position = ik_solution["base_position"]
-            # base_quaternion = ik_solution["base_quaternion"]
-        else:           
-            temp_joints_integrator.advance(joints_velocity=ik_solution)
-        '''
-        joint_positions = ik_solution
+        joint_positions = ik_solution.joint_configuration_sol
+        base_position = ik_solution.base_position_sol
+        base_quaternion = ik_solution.base_quaternion_sol
+
         # Reset the base pose and the joint positions
-        # icub.to_gazebo().reset_base_pose(base_position, base_quaternion)
+        icub.to_gazebo().reset_base_pose(base_position, base_quaternion)
         icub.to_gazebo().reset_joint_positions(joint_positions, controlled_joints)
         gazebo.run(paused=True)
 
