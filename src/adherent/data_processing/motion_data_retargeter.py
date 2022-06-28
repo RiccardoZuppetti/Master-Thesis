@@ -5,6 +5,8 @@ import numpy as np
 from typing import List, Dict
 import manifpy as manif
 from dataclasses import dataclass, field
+
+import setuptools
 from gym_ignition.rbd.idyntree import numpy
 from adherent.data_processing import utils
 from gym_ignition.rbd.conversions import Rotation
@@ -254,11 +256,10 @@ class IKElement:
 
         # Configure SO3 Tasks
         for key in self.temp_dict.keys():
-            
-            # Skip the base
+
             if key == "Pelvis":
                 continue
-            
+
             orientation_so3_param_handler = blf.parameters_handler.StdParametersHandler()
             orientation_so3_param_handler.set_parameter_string(name="robot_velocity_variable_name", value="robotVelocity")
             orientation_so3_param_handler.set_parameter_string(name="frame_name", value=f"data_{key}")
@@ -283,7 +284,8 @@ class IKElement:
     def set_pose_set_point(self, target_base_position: np.ndarray, target_base_quaternion: np.ndarray):
         """Set set point for the pose SE3 task"""
 
-        I_H_F = manif.SE3(position=target_base_position, quaternion=target_base_quaternion)
+        original_quaternion = utils.to_xyzw(target_base_quaternion)
+        I_H_F = manif.SE3(position=target_base_position, quaternion=original_quaternion)
         mixed_velocity = manif.SE3Tangent([0.0] * 6)
         assert self.pose_se3_task.set_set_point(I_H_F=I_H_F, mixed_velocity=mixed_velocity)
 
@@ -295,7 +297,7 @@ class IKElement:
         angularVelocity = manif.SO3Tangent([0.0] * 3)
         assert self.temp_dict[temp_link].set_set_point(I_R_F=I_R_F, angular_velocity=angularVelocity)
 
-    def solve_ik(self) -> np.array:
+    def solve_ik(self) -> (np.array, np.array):
         """Solve the ik problem and return the solution (desired joint velocities)."""
 
         try:
@@ -309,8 +311,15 @@ class IKElement:
         ik_state = self.ik_element.get_output()
         assert self.ik_element.is_output_valid()
 
-        return ik_state.joint_velocity
+        return ik_state.joint_velocity, ik_state.base_velocity.coeffs()
 
+@dataclass
+class IKFinalSol:
+    """Class for the full IK solution"""
+
+    joint_configuration_sol: np.ndarray = np.zeros(32)
+    base_position_sol: np.ndarray = np.zeros(3)
+    base_quaternion_sol: np.ndarray = np.zeros(4)
 
 @dataclass
 class WBGR:
@@ -325,6 +334,8 @@ class WBGR:
     ik: IKElement
     robot_to_target_base_quat: List
     joints_integrator: Integrator = None
+    base_integrator: Integrator = None
+    base_orientation_integrator: Integrator = None
 
     # Kindyn descriptor
     kindyn_des_desc: blf.floating_base_estimators.KinDynComputationsDescriptor = None
@@ -332,9 +343,15 @@ class WBGR:
     # Desired quantities
     joints_values_des: np.array = field(default_factory=lambda: np.array([]))
     joints_velocities_des: np.array = field(default_factory=lambda: np.array([]))
+    base_values_des: np.array = field(default_factory=lambda: np.array([]))
 
     # Measured quantities
     temp_initial_velocities: np.array = np.zeros(32)
+    base_twist: np.array = np.zeros(6)
+    base_linear_velocity: np.array = np.zeros(3)
+    base_angular_velocity: np.array = np.zeros(3)
+    orientation_temp: np.array = np.empty([3, 3])
+
     joints_values: np.array = np.array([0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,
                               0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,
                               0.1388792845, 0.0, 0.0,
@@ -346,9 +363,9 @@ class WBGR:
     dt: float = 0.01
 
     # Base parameters
-    base_twist = [0] * 6
     initial_rotation_matrix = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
-    initial_position = [0, 0, 0.53]
+    manif_rotation_matrix = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    initial_position = [0, 0, 0]
     last_row = [0, 0, 0, 1]
     world_H_base = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
@@ -393,6 +410,9 @@ class WBGR:
         # Configure the kindyn descriptors
         self.configure_kindyn_descriptors()
 
+        # Set the initial position vector
+        self.initial_position = self.ik_targets.base_pose_targets['positions'][0]
+
         # Retrieve initial rotation matrix
         initial_r = Rotation.from_quat(self.ik_targets.base_pose_targets['orientations'][0])
         self.initial_rotation_matrix = initial_r.as_matrix()
@@ -411,6 +431,8 @@ class WBGR:
 
         # Configure the integrator from joint velocities to joint positions
         self.configure_joints_integrator()
+
+        self.configure_base_integrator()
 
     def rotateMatrix(self) -> None:
         """ Rotate the matrix by 180 degrees"""
@@ -447,6 +469,7 @@ class WBGR:
             for j in range(N):
                 self.world_H_base[i][j] = self.initial_rotation_matrix[i][j]
 
+
     def configure_kindyn_descriptors(self) -> None:
         """Setup the kindyn descriptor for desired values."""
 
@@ -474,6 +497,11 @@ class WBGR:
         """Initialize the integrator for the joint references."""
 
         self.joints_integrator = Integrator.build(joints_initial_position=self.joints_values, dt=self.dt)
+
+    def configure_base_integrator(self) -> None:
+        """Initialize the integrator for the base references."""
+
+        self.base_integrator = Integrator.build(joints_initial_position=self.initial_position, dt=self.dt)
 
     # ========
     # RETARGET
@@ -511,20 +539,50 @@ class WBGR:
             # SOLVE IK
             # ========
 
-            # Retrieve joint velocities
-            self.joints_velocities_des = self.ik.solve_ik()
-
+            # Retrieve joint & base velocities
+            self.joints_velocities_des, self.base_twist = self.ik.solve_ik()
+            self.base_linear_velocity = self.base_twist[:3]
+            self.base_angular_velocity = self.base_twist[3:]
+            temp_twist = np.copy(self.base_twist)
             temp_velocities = np.copy(self.joints_velocities_des)
 
             # Retrieve joint positions
             self.joints_integrator.advance(joints_velocity=self.joints_velocities_des)
             self.joints_values_des = self.joints_integrator.get_joints_position()
-
             temp_values = np.copy(self.joints_values_des)
 
-            ik_solutions.append(temp_values)
+            # Retrieve base position
+            self.base_integrator.advance(joints_velocity=self.base_linear_velocity)
+            self.base_values_des = self.base_integrator.get_joints_position()
+            temp_base_values = np.copy(self.base_values_des)
 
-            assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, temp_values, self.base_twist, temp_velocities, world_gravity())
+            # Retrieve base orientation
+            omega_manif = manif.SO3Tangent(self.base_angular_velocity)
+            original_quaternion_manif = utils.to_xyzw(self.ik_targets.base_pose_targets['orientations'][i])
+            manif_base_orientation = manif.SO3(original_quaternion_manif)
+            next_orientation_base = omega_manif.plus(manif_base_orientation)
+            temp_quat_manif = Rotation.from_quat(next_orientation_base.coeffs())
+            self.manif_rotation_matrix = temp_quat_manif.as_matrix()
+
+            # Update the world_H_base
+            M = len(self.world_H_base)
+            N = len(self.manif_rotation_matrix)
+
+            for i in range(M):
+                self.world_H_base[3][i] = self.last_row[i]
+
+            for i in range(N):
+                self.world_H_base[i][3] = temp_base_values[i]
+
+            for i in range(N):
+                for j in range(N):
+                    self.world_H_base[i][j] = self.manif_rotation_matrix[i][j]
+
+            # Update the ik solution
+            ik_solutions.append(IKFinalSol(joint_configuration_sol=temp_values, base_position_sol=temp_base_values, base_quaternion_sol=next_orientation_base.coeffs()))
+
+            # Update the robot state
+            assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, temp_values, temp_twist, temp_velocities, world_gravity())
 
         return timestamps, ik_solutions
 
