@@ -1,14 +1,9 @@
 # SPDX-FileCopyrightText: Fondazione Istituto Italiano di Tecnologia
 # SPDX-License-Identifier: BSD-3-Clause
 
-import math
-import time
 import json
-import numpy as np
-from typing import List
 from scenario import core
 from scenario import gazebo as scenario
-from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import IKSolution
 import math
 import time
 import yarp
@@ -103,6 +98,12 @@ def to_xyzw(wxyz: List) -> List:
     """Auxiliary function to convert quaternions from wxyz to xyzw format."""
 
     return wxyz[[1, 2, 3, 0]]
+
+def to_wxyz(xyzw: List) -> List:
+    """Auxiliary function to convert quaternions from xyzw to wxyz format."""
+
+    temp_list = [xyzw[3], xyzw[0], xyzw[1], xyzw[2]]
+    return temp_list
 
 def store_retargeted_mocap_as_json(timestamps: List, ik_solutions: List, outfile_name: str) -> None:
     """Auxiliary function to store the retargeted motion."""
@@ -199,7 +200,7 @@ def visualize_retargeted_motion(timestamps: List,
 
         ik_solution = ik_solutions[i]
 
-        # Retrieve the base pose and the joint positions, based on the type of ik_solution
+        # Retrieve the base pose and the joint positions
         joint_positions = ik_solution.joint_configuration_sol
         base_position = ik_solution.base_position_sol
         base_quaternion = ik_solution.base_quaternion_sol
