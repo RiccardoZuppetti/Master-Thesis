@@ -6,7 +6,6 @@ from typing import List, Dict
 import manifpy as manif
 from dataclasses import dataclass, field
 
-import setuptools
 from gym_ignition.rbd.idyntree import numpy
 from adherent.data_processing import utils
 from gym_ignition.rbd.conversions import Rotation
@@ -14,13 +13,9 @@ from gym_ignition.rbd.conversions import Transform
 from gym_ignition.rbd.conversions import Quaternion
 from adherent.data_processing import motion_data
 from gym_ignition.rbd.idyntree import kindyncomputations
-from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import IKSolution
-from gym_ignition.rbd.idyntree.inverse_kinematics_nlp import InverseKinematicsNLP
 import bipedal_locomotion_framework.bindings as blf
 from adherent.data_processing.utils import Integrator
-from adherent.data_processing.utils import synchronize
 from adherent.data_processing.utils import world_gravity
-import time
 
 
 @dataclass
@@ -171,6 +166,7 @@ class IKTargets:
 
             self.link_orientation_targets[link] = np.array(updated_orientations)
 
+
     def enforce_straight_head(self) -> None:
         """Enforce torso roll and pitch target orientation for the head, while keeping the yaw unchanged."""
 
@@ -257,6 +253,7 @@ class IKElement:
         # Configure SO3 Tasks
         for key in self.temp_dict.keys():
 
+            # Skip the Pelvis link
             if key == "Pelvis":
                 continue
 
@@ -297,7 +294,7 @@ class IKElement:
         angularVelocity = manif.SO3Tangent([0.0] * 3)
         assert self.temp_dict[temp_link].set_set_point(I_R_F=I_R_F, angular_velocity=angularVelocity)
 
-    def solve_ik(self) -> (np.array, np.array):
+    def solve_ik(self) -> np.array:
         """Solve the ik problem and return the solution (desired joint velocities)."""
 
         try:
@@ -311,7 +308,7 @@ class IKElement:
         ik_state = self.ik_element.get_output()
         assert self.ik_element.is_output_valid()
 
-        return ik_state.joint_velocity, ik_state.base_velocity.coeffs()
+        return ik_state.joint_velocity
 
 @dataclass
 class IKFinalSol:
@@ -334,8 +331,6 @@ class WBGR:
     ik: IKElement
     robot_to_target_base_quat: List
     joints_integrator: Integrator = None
-    base_integrator: Integrator = None
-    base_orientation_integrator: Integrator = None
 
     # Kindyn descriptor
     kindyn_des_desc: blf.floating_base_estimators.KinDynComputationsDescriptor = None
@@ -346,12 +341,8 @@ class WBGR:
     base_values_des: np.array = field(default_factory=lambda: np.array([]))
 
     # Measured quantities
-    temp_initial_velocities: np.array = np.zeros(32)
+    joints_initial_velocities: np.array = np.zeros(32)
     base_twist: np.array = np.zeros(6)
-    base_linear_velocity: np.array = np.zeros(3)
-    base_angular_velocity: np.array = np.zeros(3)
-    orientation_temp: np.array = np.empty([3, 3])
-
     joints_values: np.array = np.array([0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,
                               0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,
                               0.1388792845, 0.0, 0.0,
@@ -364,7 +355,7 @@ class WBGR:
 
     # Base parameters
     initial_rotation_matrix = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
-    manif_rotation_matrix = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    rotation_matrix = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
     initial_position = [0, 0, 0]
     last_row = [0, 0, 0, 1]
     world_H_base = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
@@ -424,15 +415,13 @@ class WBGR:
         self.setupTransformationMatrix()
 
         # Configure the robot state
-        assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, self.joints_values, self.base_twist, self.temp_initial_velocities, world_gravity())
+        assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, self.joints_values, self.base_twist, self.joints_initial_velocities, world_gravity())
 
         # Configure the inverse kinematics
         self.configure_blf_ik()
 
         # Configure the integrator from joint velocities to joint positions
         self.configure_joints_integrator()
-
-        self.configure_base_integrator()
 
     def rotateMatrix(self) -> None:
         """ Rotate the matrix by 180 degrees"""
@@ -498,11 +487,6 @@ class WBGR:
 
         self.joints_integrator = Integrator.build(joints_initial_position=self.joints_values, dt=self.dt)
 
-    def configure_base_integrator(self) -> None:
-        """Initialize the integrator for the base references."""
-
-        self.base_integrator = Integrator.build(joints_initial_position=self.initial_position, dt=self.dt)
-
     # ========
     # RETARGET
     # ========
@@ -539,50 +523,62 @@ class WBGR:
             # SOLVE IK
             # ========
 
-            # Retrieve joint & base velocities
-            self.joints_velocities_des, self.base_twist = self.ik.solve_ik()
-            self.base_linear_velocity = self.base_twist[:3]
-            self.base_angular_velocity = self.base_twist[3:]
-            temp_twist = np.copy(self.base_twist)
-            temp_velocities = np.copy(self.joints_velocities_des)
+            # Retrieve joint velocities
+            self.joints_velocities_des = self.ik.solve_ik()
+            joints_velocities_copy = np.copy(self.joints_velocities_des)
 
             # Retrieve joint positions
             self.joints_integrator.advance(joints_velocity=self.joints_velocities_des)
             self.joints_values_des = self.joints_integrator.get_joints_position()
-            temp_values = np.copy(self.joints_values_des)
+            joints_values_copy = np.copy(self.joints_values_des)
 
-            # Retrieve base position
-            self.base_integrator.advance(joints_velocity=self.base_linear_velocity)
-            self.base_values_des = self.base_integrator.get_joints_position()
-            temp_base_values = np.copy(self.base_values_des)
+            # Position of the base of the robot (fixed)
+            base_fixed_position = [0, 0, 0.53]
 
             # Retrieve base orientation
-            omega_manif = manif.SO3Tangent(self.base_angular_velocity)
-            original_quaternion_manif = utils.to_xyzw(self.ik_targets.base_pose_targets['orientations'][i])
-            manif_base_orientation = manif.SO3(original_quaternion_manif)
-            next_orientation_base = omega_manif.plus(manif_base_orientation)
-            temp_quat_manif = Rotation.from_quat(next_orientation_base.coeffs())
-            self.manif_rotation_matrix = temp_quat_manif.as_matrix()
+            human_base_orientation = self.ik_targets.base_pose_targets['orientations'][i]
+            temp_human_base_orientation = Rotation.from_quat(human_base_orientation)
+            self.rotation_matrix = temp_human_base_orientation.as_matrix()
+
+            # Rotate the rotation matrix by 180 degrees
+            N = len(self.rotation_matrix)
+
+            for index in range(N // 2):
+                for j in range(N):
+                    temp = self.rotation_matrix[index][j]
+                    self.rotation_matrix[index][j] = self.rotation_matrix[N - index - 1][N - j - 1]
+                    self.rotation_matrix[N - index - 1][N - j - 1] = temp
+
+            # handle the case when the matrix has odd dimensions
+            if N % 2 == 1:
+                for j in range(N // 2):
+                    temp = self.rotation_matrix[N // 2][j]
+                    self.rotation_matrix[N // 2][j] = self.rotation_matrix[N // 2][N - j - 1]
+                    self.rotation_matrix[N // 2][N - j - 1] = temp
+
+            # Retrieve the orientated quaternion for update the robot state
+            temp_rotated_quaternion = Rotation.from_matrix(self.rotation_matrix)
+            rotated_quaternion = utils.to_wxyz(temp_rotated_quaternion.as_quat())
 
             # Update the world_H_base
             M = len(self.world_H_base)
-            N = len(self.manif_rotation_matrix)
+            N = len(self.rotation_matrix)
 
-            for i in range(M):
-                self.world_H_base[3][i] = self.last_row[i]
+            for index in range(M):
+                self.world_H_base[3][index] = self.last_row[index]
 
-            for i in range(N):
-                self.world_H_base[i][3] = temp_base_values[i]
+            for index in range(N):
+                self.world_H_base[index][3] = base_fixed_position[index]
 
-            for i in range(N):
+            for index in range(N):
                 for j in range(N):
-                    self.world_H_base[i][j] = self.manif_rotation_matrix[i][j]
+                    self.world_H_base[index][j] = self.rotation_matrix[index][j]
 
-            # Update the ik solution
-            ik_solutions.append(IKFinalSol(joint_configuration_sol=temp_values, base_position_sol=temp_base_values, base_quaternion_sol=next_orientation_base.coeffs()))
+            # Update ik solution
+            ik_solutions.append(IKFinalSol(joint_configuration_sol=joints_values_copy, base_position_sol=base_fixed_position, base_quaternion_sol=rotated_quaternion))
 
             # Update the robot state
-            assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, temp_values, temp_twist, temp_velocities, world_gravity())
+            assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, joints_values_copy, self.base_twist, joints_velocities_copy, world_gravity())
 
         return timestamps, ik_solutions
 
@@ -724,9 +720,10 @@ class KFWBGR(WBGR):
     kinematic_computations: KinematicComputations = field(default_factory= lambda: KinematicComputations())
 
     @staticmethod
-    def build(motiondata: motion_data.MotionData,
+    def build(icub_urdf: str,
+              motiondata: motion_data.MotionData,
               metadata: motion_data.MocapMetadata,
-              ik: InverseKinematicsNLP,
+              controlled_joints: List,
               mirroring: bool = False,
               horizontal_feet: bool = False,
               straight_head: bool = False,
@@ -737,6 +734,9 @@ class KFWBGR(WBGR):
 
         # Instantiate IKTargets
         ik_targets = IKTargets.build(motiondata=motiondata, metadata=metadata)
+
+        # Instantiate IKElement
+        ik = IKElement.build(motiondata=motiondata)
 
         if mirroring:
             # Mirror the ik targets
@@ -750,10 +750,9 @@ class KFWBGR(WBGR):
             # Enforce straight head
             ik_targets.enforce_straight_head()
 
-        kinematic_computations = KinematicComputations.build(
-            kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos)
+        kinematic_computations = KinematicComputations.build(kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos)
 
-        return KFWBGR(ik_targets=ik_targets, ik=ik, robot_to_target_base_quat=robot_to_target_base_quat,
+        return KFWBGR(icub_urdf=icub_urdf, joints_list=controlled_joints, ik_targets=ik_targets, ik=ik, robot_to_target_base_quat=robot_to_target_base_quat,
                       kinematic_computations=kinematic_computations)
 
     def KF_retarget(self) -> (List, List):
@@ -767,7 +766,7 @@ class KFWBGR(WBGR):
 
         # Override base position in the ik solutions
         for i in range(len(kinematically_feasible_base_position)):
-            ik_solutions[i+1].base_position = kinematically_feasible_base_position[i]
+            ik_solutions[i+1].base_position_sol = kinematically_feasible_base_position[i]
 
         return timestamps, ik_solutions
 
@@ -778,9 +777,9 @@ class KFWBGR(WBGR):
         kinematically_feasible_base_positions = []
 
         # Set initial robot configuration
-        initial_joint_configuration = ik_solutions[0].joint_configuration
+        initial_joint_configuration = ik_solutions[0].joint_configuration_sol
         initial_base_position = self.kinematic_computations.kindyn.get_world_base_transform()[0:3, -1]
-        initial_base_quaternion = ik_solutions[0].base_quaternion
+        initial_base_quaternion = ik_solutions[0].base_quaternion_sol
         self.kinematic_computations.reset_robot_configuration(joint_positions=initial_joint_configuration,
                                                               base_position=initial_base_position,
                                                               base_quaternion=initial_base_quaternion)
@@ -798,14 +797,14 @@ class KFWBGR(WBGR):
             support_foot=support_foot, support_vertex=support_vertex_prev)
         support_vertex_offset = [support_vertex_pos[0], support_vertex_pos[1], 0]
 
-        for ik_solution in ik_solutions[1:]:
+        for i in range(1, len(ik_solutions)):
 
             # ===========================================
             # UPDATE JOINT POSITIONS AND BASE ORIENTATION
             # ===========================================
 
-            joint_positions = ik_solution.joint_configuration
-            base_quaternion = ik_solution.base_quaternion
+            joint_positions = ik_solutions[i].joint_configuration_sol
+            base_quaternion = ik_solutions[i].base_quaternion_sol
             previous_base_position = self.kinematic_computations.kindyn.get_world_base_transform()[0:3, -1]
             self.kinematic_computations.reset_robot_configuration(joint_positions=joint_positions,
                                                                   base_position=previous_base_position,
