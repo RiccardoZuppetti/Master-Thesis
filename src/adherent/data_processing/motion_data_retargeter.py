@@ -21,7 +21,6 @@ from adherent.data_processing.utils import world_gravity
 @dataclass
 class IKTargets:
     """Class to manipulate the targets for the IK used in the retargeting pipeline."""
-
     timestamps: List[float]
     root_link: str
     base_pose_targets: Dict
@@ -541,20 +540,20 @@ class WBGR:
             self.rotation_matrix = temp_human_base_orientation.as_matrix()
 
             # Rotate the rotation matrix by 180 degrees
-            N = len(self.rotation_matrix)
+            # N = len(self.rotation_matrix)
 
-            for index in range(N // 2):
-                for j in range(N):
-                    temp = self.rotation_matrix[index][j]
-                    self.rotation_matrix[index][j] = self.rotation_matrix[N - index - 1][N - j - 1]
-                    self.rotation_matrix[N - index - 1][N - j - 1] = temp
+            # for index in range(N // 2):
+            #    for j in range(N):
+            #        temp = self.rotation_matrix[index][j]
+            #        self.rotation_matrix[index][j] = self.rotation_matrix[N - index - 1][N - j - 1]
+            #        self.rotation_matrix[N - index - 1][N - j - 1] = temp
 
             # handle the case when the matrix has odd dimensions
-            if N % 2 == 1:
-                for j in range(N // 2):
-                    temp = self.rotation_matrix[N // 2][j]
-                    self.rotation_matrix[N // 2][j] = self.rotation_matrix[N // 2][N - j - 1]
-                    self.rotation_matrix[N // 2][N - j - 1] = temp
+            # if N % 2 == 1:
+            #    for j in range(N // 2):
+            #        temp = self.rotation_matrix[N // 2][j]
+            #        self.rotation_matrix[N // 2][j] = self.rotation_matrix[N // 2][N - j - 1]
+            #        self.rotation_matrix[N // 2][N - j - 1] = temp
 
             # Retrieve the orientated quaternion for update the robot state
             temp_rotated_quaternion = Rotation.from_matrix(self.rotation_matrix)
@@ -591,13 +590,14 @@ class KinematicComputations:
 
     kindyn: kindyncomputations.KinDynComputations
     local_foot_vertices_pos: List
+    feet_frames: Dict
 
     @staticmethod
     def build(kindyn: kindyncomputations.KinDynComputations,
-              local_foot_vertices_pos: List) -> "KinematicComputations":
+              local_foot_vertices_pos: List, feet_frames: Dict) -> "KinematicComputations":
         """Build an instance of KinematicComputations."""
 
-        return KinematicComputations(kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos)
+        return KinematicComputations(kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos, feet_frames=feet_frames)
 
     def compute_W_vertices_pos(self) -> List:
         """Compute the feet vertices positions in the world (W) frame."""
@@ -610,7 +610,7 @@ class KinematicComputations:
 
         # Compute right foot (RF) transform w.r.t. the world (W) frame
         world_H_base = self.kindyn.get_world_base_transform()
-        base_H_r_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link", frame_name="r_foot")
+        base_H_r_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link", frame_name=self.feet_frames["right_foot"])
         W_H_RF = world_H_base.dot(base_H_r_foot)
 
         # Get the right-foot vertices positions in the world frame
@@ -627,7 +627,7 @@ class KinematicComputations:
 
         # Compute left foot (LF) transform w.r.t. the world (W) frame
         world_H_base = self.kindyn.get_world_base_transform()
-        base_H_l_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link", frame_name="l_foot")
+        base_H_l_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link", frame_name=self.feet_frames["left_foot"])
         W_H_LF = world_H_base.dot(base_H_l_foot)
 
         # Get the left-foot vertices positions wrt the world frame
@@ -729,7 +729,8 @@ class KFWBGR(WBGR):
               straight_head: bool = False,
               robot_to_target_base_quat: List = None,
               kindyn: kindyncomputations.KinDynComputations = None,
-              local_foot_vertices_pos: List = None) -> "KFWBGR":
+              local_foot_vertices_pos: List = None,
+              feet_frames: Dict = None) -> "KFWBGR":
         """Build an instance of KFWBGR."""
 
         # Instantiate IKTargets
@@ -750,7 +751,7 @@ class KFWBGR(WBGR):
             # Enforce straight head
             ik_targets.enforce_straight_head()
 
-        kinematic_computations = KinematicComputations.build(kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos)
+        kinematic_computations = KinematicComputations.build(kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos, feet_frames=feet_frames)
 
         return KFWBGR(icub_urdf=icub_urdf, joints_list=controlled_joints, ik_targets=ik_targets, ik=ik, robot_to_target_base_quat=robot_to_target_base_quat,
                       kinematic_computations=kinematic_computations)
@@ -790,7 +791,7 @@ class KFWBGR(WBGR):
 
         # Define the initial support vertex index and the initial support foot
         support_vertex_prev = 0 # i.e. right-foot front-left vertex (RFL)
-        support_foot = "r_foot"
+        support_foot = self.kinematic_computations.feet_frames["right_foot"]
 
         # Compute the initial support vertex position in the world frame and its ground projection
         support_vertex_pos = self.kinematic_computations.compute_support_vertex_pos(
@@ -830,9 +831,9 @@ class KFWBGR(WBGR):
 
                 # Update the support foot
                 if vertex_indexes_to_names[support_vertex][0] == "R":
-                    support_foot = "r_foot"
+                    support_foot = self.kinematic_computations.feet_frames["right_foot"]
                 else:
-                    support_foot = "l_foot"
+                    support_foot = self.kinematic_computations.feet_frames["left_foot"]
 
                 # Debug
                 print("Change of support vertex: from", vertex_indexes_to_names[support_vertex_prev],

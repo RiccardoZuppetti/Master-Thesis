@@ -79,14 +79,18 @@ scenario.set_verbosity(scenario.Verbosity_warning)
 gazebo, world = init_gazebo_sim()
 
 # Retrieve the robot urdf model
-icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboSimpleCollisionsV2_5_xsens/iCubGazeboSimpleCollisionsV2_5_xsens.urdf")
+icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboV3_xsens/iCubGazeboV3_xsens.urdf")
 
 # Insert the robot in the empty world
 icub = utils.iCub(world=world, urdf=icub_urdf)
+input()
 
 # Show the GUI
 gazebo.gui()
 gazebo.run(paused=True)
+
+print("Showing icub in the gui")
+input()
 
 # Create a KinDynComputations object
 kindyn = kindyncomputations.KinDynComputations(model_file=icub_urdf, considered_joints=icub.joint_names())
@@ -103,13 +107,14 @@ controlled_joints = icub.joint_names()
 # RETARGETING
 # ===========
 
+# Define robot-specific feet frames
+feet_frames = utils.define_feet_frames(robot="iCubV3")
+
 # Define robot-specific feet vertices positions in the foot frame
-local_foot_vertices_pos = utils.define_foot_vertices(robot="iCubV2_5")
+local_foot_vertices_pos = utils.define_foot_vertices(robot="iCubV3")
 
 # Define robot-specific quaternions from the robot base frame to the target base frame
-robot_to_target_base_quat = utils.define_robot_to_target_base_quat(robot="iCubV2_5")
-
-# Instantiate the retargeter
+robot_to_target_base_quat = utils.define_robot_to_target_base_quat(robot="iCubV3")
 
 # Instantiate the retargeter
 if kinematically_feasible_base_retargeting:
@@ -122,7 +127,8 @@ if kinematically_feasible_base_retargeting:
                                                     straight_head=straight_head,
                                                     robot_to_target_base_quat=robot_to_target_base_quat,
                                                     kindyn=kindyn,
-                                                    local_foot_vertices_pos=local_foot_vertices_pos)
+                                                    local_foot_vertices_pos=local_foot_vertices_pos,
+                                                    feet_frames=feet_frames)
 else:
     retargeter = motion_data_retargeter.WBGR.build(icub_urdf=icub_urdf,
                                                motiondata=motiondata,
