@@ -83,14 +83,10 @@ icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboV3_x
 
 # Insert the robot in the empty world
 icub = utils.iCub(world=world, urdf=icub_urdf)
-input()
 
 # Show the GUI
 gazebo.gui()
 gazebo.run(paused=True)
-
-print("Showing icub in the gui")
-input()
 
 # Create a KinDynComputations object
 kindyn = kindyncomputations.KinDynComputations(model_file=icub_urdf, considered_joints=icub.joint_names())

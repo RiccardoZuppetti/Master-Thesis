@@ -407,9 +407,6 @@ class WBGR:
         initial_r = Rotation.from_quat(self.ik_targets.base_pose_targets['orientations'][0])
         self.initial_rotation_matrix = initial_r.as_matrix()
 
-        # Rotate the rotation matrix by 180 degrees
-        self.rotateMatrix()
-
         # Initialize the transformation matrix
         self.setupTransformationMatrix()
 
@@ -421,25 +418,6 @@ class WBGR:
 
         # Configure the integrator from joint velocities to joint positions
         self.configure_joints_integrator()
-
-    def rotateMatrix(self) -> None:
-        """ Rotate the matrix by 180 degrees"""
-
-        N = len(self.initial_rotation_matrix)
-
-        # rotate the matrix by 180 degrees
-        for i in range(N // 2):
-            for j in range(N):
-                temp = self.initial_rotation_matrix[i][j]
-                self.initial_rotation_matrix[i][j] = self.initial_rotation_matrix[N - i - 1][N - j - 1]
-                self.initial_rotation_matrix[N - i - 1][N - j - 1] = temp
-
-        # handle the case when the matrix has odd dimensions
-        if N % 2 == 1:
-            for j in range(N // 2):
-                temp = self.initial_rotation_matrix[N // 2][j]
-                self.initial_rotation_matrix[N // 2][j] = self.initial_rotation_matrix[N // 2][N - j - 1]
-                self.initial_rotation_matrix[N // 2][N - j - 1] = temp
 
     def setupTransformationMatrix(self) -> None:
         """Initialize the transformation matrix"""
@@ -536,28 +514,11 @@ class WBGR:
 
             # Retrieve base orientation
             human_base_orientation = self.ik_targets.base_pose_targets['orientations'][i]
-            temp_human_base_orientation = Rotation.from_quat(human_base_orientation)
+
+            # Retrieve rotation matrix
+            rotated_quaternion = utils.to_xyzw(human_base_orientation)
+            temp_human_base_orientation = Rotation.from_quat(rotated_quaternion)
             self.rotation_matrix = temp_human_base_orientation.as_matrix()
-
-            # Rotate the rotation matrix by 180 degrees
-            # N = len(self.rotation_matrix)
-
-            # for index in range(N // 2):
-            #    for j in range(N):
-            #        temp = self.rotation_matrix[index][j]
-            #        self.rotation_matrix[index][j] = self.rotation_matrix[N - index - 1][N - j - 1]
-            #        self.rotation_matrix[N - index - 1][N - j - 1] = temp
-
-            # handle the case when the matrix has odd dimensions
-            # if N % 2 == 1:
-            #    for j in range(N // 2):
-            #        temp = self.rotation_matrix[N // 2][j]
-            #        self.rotation_matrix[N // 2][j] = self.rotation_matrix[N // 2][N - j - 1]
-            #        self.rotation_matrix[N // 2][N - j - 1] = temp
-
-            # Retrieve the orientated quaternion for update the robot state
-            temp_rotated_quaternion = Rotation.from_matrix(self.rotation_matrix)
-            rotated_quaternion = utils.to_wxyz(temp_rotated_quaternion.as_quat())
 
             # Update the world_H_base
             M = len(self.world_H_base)
@@ -574,7 +535,7 @@ class WBGR:
                     self.world_H_base[index][j] = self.rotation_matrix[index][j]
 
             # Update ik solution
-            ik_solutions.append(IKFinalSol(joint_configuration_sol=joints_values_copy, base_position_sol=base_fixed_position, base_quaternion_sol=rotated_quaternion))
+            ik_solutions.append(IKFinalSol(joint_configuration_sol=joints_values_copy, base_position_sol=base_fixed_position, base_quaternion_sol=human_base_orientation))
 
             # Update the robot state
             assert self.kindyn_des_desc.kindyn.set_robot_state(self.world_H_base, joints_values_copy, self.base_twist, joints_velocities_copy, world_gravity())
