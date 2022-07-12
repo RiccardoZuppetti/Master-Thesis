@@ -43,13 +43,13 @@ class StorageHandler:
     blending_coefficients_path: str
 
     # Storage dictionaries for footsteps, postural, joystick input and blending coefficients
-    footsteps: Dict = field(default_factory=lambda: {'l_foot': [], 'r_foot': []})
+    footsteps: Dict
     posturals: Dict = field(default_factory=lambda: {'base': [], 'joints': [], 'links': [], 'com': []})
     joystick_inputs: Dict = field(default_factory=lambda: {'raw_data': [], 'quad_bezier': [], 'base_velocities': [], 'facing_dirs': []})
     blending_coeffs: Dict = field(default_factory=lambda: {'w_1': [], 'w_2': [], 'w_3': [], 'w_4': []})
 
     @staticmethod
-    def build(storage_path: str) -> "StorageHandler":
+    def build(storage_path: str, feet_frames: Dict) -> "StorageHandler":
         """Build an instance of StorageHandler."""
 
         # Storage paths for the footsteps, postural, joystick input and blending coefficients
@@ -57,11 +57,13 @@ class StorageHandler:
         postural_path = os.path.join(storage_path, "postural.txt")
         joystick_input_path = os.path.join(storage_path, "joystick_input.txt")
         blending_coefficients_path = os.path.join(storage_path, "blending_coefficients.txt")
+        footsteps = {feet_frames["left_foot"]: [], feet_frames["right_foot"]: []}
 
         return StorageHandler(footsteps_path,
                               postural_path,
                               joystick_input_path,
-                              blending_coefficients_path)
+                              blending_coefficients_path,
+                              footsteps=footsteps)
 
     def update_joystick_inputs_storage(self, raw_data: List, quad_bezier: List, base_velocities: List, facing_dirs: List) -> None:
         """Update the storage of the joystick inputs."""
@@ -124,6 +126,9 @@ class StorageHandler:
 class FootstepsExtractor:
     """Class to extract the footsteps from the generated trajectory."""
 
+    # Define robot-specific feet frames definition
+    feet_frames: Dict
+
     # Auxiliary variables for the footsteps update before saving
     nominal_DS_duration: float
     difference_position_threshold: float
@@ -133,12 +138,14 @@ class FootstepsExtractor:
     waiting_for_deactivation_time: bool = False
 
     @staticmethod
-    def build(nominal_DS_duration: float = 0.04,
+    def build(feet_frames: Dict,
+              nominal_DS_duration: float = 0.04,
               difference_position_threshold: float = 0.04,
               difference_height_norm_threshold: bool = 0.005) -> "FootstepsExtractor":
         """Build an instance of FootstepsExtractor."""
 
-        return FootstepsExtractor(nominal_DS_duration=nominal_DS_duration,
+        return FootstepsExtractor(feet_frames=feet_frames,
+                                  nominal_DS_duration=nominal_DS_duration,
                                   difference_position_threshold=difference_position_threshold,
                                   difference_height_norm_threshold=difference_height_norm_threshold)
 
@@ -149,13 +156,13 @@ class FootstepsExtractor:
         world_H_base = kindyn.get_world_base_transform()
 
         # Compute right foot height
-        base_H_r_foot = kindyn.get_relative_transform(ref_frame_name="root_link", frame_name="r_foot")
+        base_H_r_foot = kindyn.get_relative_transform(ref_frame_name="root_link", frame_name=self.feet_frames["right_foot"])
         W_H_RF = world_H_base.dot(base_H_r_foot)
         W_right_foot_pos = W_H_RF [0:3, -1]
         right_foot_height = W_right_foot_pos[2]
 
         # Compute left foot height
-        base_H_l_foot = kindyn.get_relative_transform(ref_frame_name="root_link", frame_name="l_foot")
+        base_H_l_foot = kindyn.get_relative_transform(ref_frame_name="root_link", frame_name=self.feet_frames["left_foot"])
         W_H_LF = world_H_base.dot(base_H_l_foot)
         W_left_foot_pos = W_H_LF[0:3, -1]
         left_foot_height = W_left_foot_pos[2]
@@ -227,9 +234,10 @@ class FootstepsExtractor:
         """Replace temporary footstep deactivation times that may not have been updated properly."""
 
         # Map from one foot to the other
-        other_foot = {"l_foot": "r_foot", "r_foot": "l_foot"}
+        other_foot = {self.feet_frames["left_foot"]: self.feet_frames["right_foot"],
+                      self.feet_frames["right_foot"]: self.feet_frames["left_foot"]}
 
-        for foot in ["l_foot","r_foot"]:
+        for foot in [self.feet_frames["left_foot"], self.feet_frames["right_foot"]]:
 
             for footstep in footsteps[foot]:
 
@@ -258,7 +266,7 @@ class FootstepsExtractor:
         """Merge footsteps that are too close each other in order to avoid unintended footsteps on the spot."""
 
         # Initialize updated footsteps list
-        updated_footsteps = {"l_foot": [], "r_foot": []}
+        updated_footsteps = {self.feet_frames["left_foot"]: [], self.feet_frames["right_foot"]: []}
 
         for foot in footsteps.keys():
 
@@ -352,10 +360,11 @@ class KinematicComputations:
 
     # Support foot and support vertex related quantities
     local_foot_vertices_pos: List
+    feet_frames: Dict
+    support_foot_prev: str
+    support_foot: str
     support_vertex_prev: int = 0
     support_vertex: int = 0
-    support_foot_prev: str = "r_foot"
-    support_foot: str = "r_foot"
     support_foot_pos: float = 0
     support_vertex_pos: float = 0
     support_vertex_offset: float = 0
@@ -363,6 +372,7 @@ class KinematicComputations:
     @staticmethod
     def build(kindyn: kindyncomputations.KinDynComputations,
               local_foot_vertices_pos: List,
+              feet_frames: Dict,
               icub: iCub,
               gazebo: scenario.GazeboSimulator,
               nominal_DS_duration: float = 0.04,
@@ -370,7 +380,8 @@ class KinematicComputations:
               difference_height_norm_threshold: bool = 0.005) -> "KinematicComputations":
         """Build an instance of KinematicComputations."""
 
-        footsteps_extractor = FootstepsExtractor.build(nominal_DS_duration=nominal_DS_duration,
+        footsteps_extractor = FootstepsExtractor.build(feet_frames=feet_frames,
+                                                       nominal_DS_duration=nominal_DS_duration,
                                                        difference_position_threshold=difference_position_threshold,
                                                        difference_height_norm_threshold=difference_height_norm_threshold)
         postural_extractor = PosturalExtractor.build()
@@ -379,6 +390,9 @@ class KinematicComputations:
                                      footsteps_extractor=footsteps_extractor,
                                      postural_extractor=postural_extractor,
                                      local_foot_vertices_pos=local_foot_vertices_pos,
+                                     feet_frames=feet_frames,
+                                     support_foot_prev=feet_frames["right_foot"],
+                                     support_foot=feet_frames["right_foot"],
                                      icub=icub,
                                      controlled_joints=icub.joint_names(),
                                      gazebo=gazebo)
@@ -396,7 +410,8 @@ class KinematicComputations:
         BR_vertex_pos = self.local_foot_vertices_pos[3]
 
         # Compute right foot (RF) transform w.r.t. the world (W) frame
-        base_H_r_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link", frame_name="r_foot")
+        base_H_r_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link",
+                                                           frame_name=self.feet_frames["right_foot"])
         W_H_RF = world_H_base.dot(base_H_r_foot)
 
         # Get the right-foot vertices positions in the world frame
@@ -412,7 +427,8 @@ class KinematicComputations:
         W_RBR_vertex_pos = W_RBR_vertex_pos_hom[0:3]
 
         # Compute left foot (LF) transform w.r.t. the world (W) frame
-        base_H_l_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link", frame_name="l_foot")
+        base_H_l_foot = self.kindyn.get_relative_transform(ref_frame_name="root_link",
+                                                           frame_name=self.feet_frames["left_foot"])
         W_H_LF = world_H_base.dot(base_H_l_foot)
 
         # Get the left-foot vertices positions wrt the world frame
@@ -578,9 +594,9 @@ class KinematicComputations:
 
             # Update the support foot
             if vertex_indexes_to_names[self.support_vertex][0] == "R":
-                self.support_foot = "r_foot"
+                self.support_foot = self.feet_frames["right_foot"]
             else:
-                self.support_foot = "l_foot"
+                self.support_foot = self.feet_frames["left_foot"]
 
             # If the support foot changed
             if self.support_foot != self.support_foot_prev:
@@ -656,7 +672,7 @@ class Plotter:
         plt.figure(figure_footsteps)
 
         # Plot left footsteps in blue, right footsteps in red
-        colors={"l_foot": 'b', "r_foot": 'r'}
+        colors = {self.feet_frames["left_foot"]: 'b', self.feet_frames["right_foot"]: 'r'}
 
         # Footstep position
         plt.scatter(new_footstep["2D_pos"][1], -new_footstep["2D_pos"][0], c=colors[support_foot])
@@ -1381,6 +1397,7 @@ class TrajectoryGenerator:
               storage_path: str,
               training_path: str,
               local_foot_vertices_pos: List,
+              feet_frames: Dict,
               initial_nn_X: List,
               initial_past_trajectory_base_pos: List,
               initial_past_trajectory_facing_dirs: List,
@@ -1406,6 +1423,7 @@ class TrajectoryGenerator:
         # Build the kinematic computations handler component
         kincomputations = KinematicComputations.build(kindyn=kindyn,
                                                       local_foot_vertices_pos=local_foot_vertices_pos,
+                                                      feet_frames=feet_frames,
                                                       icub=icub,
                                                       gazebo=gazebo,
                                                       nominal_DS_duration=nominal_DS_duration,
@@ -1416,7 +1434,7 @@ class TrajectoryGenerator:
         kincomputations.set_initial_support_vertex_and_support_foot()
 
         # Build the storage handler component
-        storage = StorageHandler.build(storage_path)
+        storage = StorageHandler.build(storage_path=storage_path, feet_frames=feet_frames)
 
         # Build the autoregression handler component
         autoregression = Autoregression.build(training_path=training_path,
@@ -1518,10 +1536,10 @@ class TrajectoryGenerator:
         if update_deactivation_time:
 
             # Define the swing foot
-            if support_foot == "r_foot":
-                swing_foot = "l_foot"
+            if support_foot == self.kincomputations.feet_frames["right_foot"]:
+                swing_foot = self.kincomputations.feet_frames["left_foot"]
             else:
-                swing_foot = "r_foot"
+                swing_foot = self.kincomputations.feet_frames["right_foot"]
 
             if self.storage.footsteps[swing_foot]:
 

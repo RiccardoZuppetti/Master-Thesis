@@ -15,13 +15,13 @@ from adherent.data_processing.utils import iCub
 from gym_ignition.utils.scenario import init_gazebo_sim
 from gym_ignition.rbd.idyntree import kindyncomputations
 from adherent.data_processing.utils import define_foot_vertices
+from adherent.data_processing.utils import define_feet_frames
 from adherent.trajectory_generation import trajectory_generator
 from adherent.trajectory_generation.utils import define_initial_nn_X
 from adherent.trajectory_generation.utils import define_initial_base_yaw
 from adherent.data_processing.utils import define_frontal_base_direction
 from adherent.data_processing.utils import define_frontal_chest_direction
 from adherent.trajectory_generation.utils import define_initial_base_height
-from adherent.trajectory_generation.utils import define_initial_past_trajectory
 from adherent.trajectory_generation.utils import define_initial_past_trajectory
 
 import matplotlib as mpl
@@ -86,10 +86,10 @@ gazebo, world = init_gazebo_sim()
 
 # Retrieve the robot urdf model
 script_directory = os.path.dirname(os.path.abspath(__file__))
-icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboSimpleCollisionsV2_5_xsens/iCubGazeboSimpleCollisionsV2_5_xsens.urdf")
+icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboV3_xsens/iCubGazeboV3_xsens.urdf")
 
 # Insert the robot in the empty world
-initial_base_height = define_initial_base_height(robot="iCubV2_5")
+initial_base_height = define_initial_base_height(robot="iCubV3")
 icub = iCub(world=world, urdf=icub_urdf, position=[0, 0, initial_base_height])
 
 # Show the GUI
@@ -121,27 +121,31 @@ config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
 # Define robot-specific feet vertices positions in the foot frame
-local_foot_vertices_pos = define_foot_vertices(robot="iCubV2_5")
+local_foot_vertices_pos = define_foot_vertices(robot="iCubV3")
 
 # Define robot-specific initial input X for the trajectory generation neural network
-initial_nn_X = define_initial_nn_X(robot="iCubV2_5")
+initial_nn_X = define_initial_nn_X(robot="iCubV3")
 
 # Define robot-specific initial past trajectory features
 initial_past_trajectory_base_pos, initial_past_trajectory_facing_dirs, initial_past_trajectory_base_vel = \
-    define_initial_past_trajectory(robot="iCubV2_5")
+    define_initial_past_trajectory(robot="iCubV3")
 
 # Define robot-specific initial base yaw angle
-initial_base_yaw = define_initial_base_yaw(robot="iCubV2_5")
+initial_base_yaw = define_initial_base_yaw(robot="iCubV3")
 
 # Define robot-specific frontal base and chest directions
-frontal_base_dir = define_frontal_base_direction(robot="iCubV2_5")
-frontal_chest_dir = define_frontal_chest_direction(robot="iCubV2_5")
+frontal_base_dir = define_frontal_base_direction(robot="iCubV3")
+frontal_chest_dir = define_frontal_chest_direction(robot="iCubV3")
+
+# Define robot-specific feet frames
+feet_frames = define_feet_frames(robot="iCubV3")
 
 # Instantiate the trajectory generator
 generator = trajectory_generator.TrajectoryGenerator.build(icub=icub, gazebo=gazebo, kindyn=kindyn,
                                                            storage_path=os.path.join(script_directory, storage_path),
                                                            training_path=os.path.join(script_directory, training_path),
                                                            local_foot_vertices_pos=local_foot_vertices_pos,
+                                                           feet_frames=feet_frames,
                                                            initial_nn_X=initial_nn_X,
                                                            initial_past_trajectory_base_pos=initial_past_trajectory_base_pos,
                                                            initial_past_trajectory_facing_dirs=initial_past_trajectory_facing_dirs,
@@ -248,4 +252,4 @@ with tf.Session(config=config) as sess:
         else:
 
             # Slow down visualization
-            time.sleep(0.01)
+            time.sleep(0.0001)
