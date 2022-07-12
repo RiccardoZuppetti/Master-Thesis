@@ -165,7 +165,6 @@ class IKTargets:
 
             self.link_orientation_targets[link] = np.array(updated_orientations)
 
-
     def enforce_straight_head(self) -> None:
         """Enforce torso roll and pitch target orientation for the head, while keeping the yaw unchanged."""
 
@@ -193,6 +192,33 @@ class IKTargets:
             updated_head_orientations.append(updated_head_quaternions)
 
         self.link_orientation_targets["Head"] = np.array(updated_head_orientations)
+
+    def enforce_wider_legs(self) -> None:
+        """Enforce offsets to the upper leg target orientations so to avoid feet crossing."""
+
+        for link in ["LeftUpperLeg", "RightUpperLeg"]:
+
+            print("Enforcing wider", link)
+
+            updated_orientations = []
+
+            for i in range(len(self.link_orientation_targets[link])):
+
+                # Retrieve original target rpy
+                original_quaternions = self.link_orientation_targets[link][i]
+                original_rotation = Rotation.from_quat(utils.to_xyzw(original_quaternions))
+                original_rpy = original_rotation.as_euler('xyz')
+
+                # Enforce RPY offsets # TODO
+                if link == "LeftUpperLeg":
+                    original_rpy += [0.1, 0, 0]
+                elif link == "RightUpperLeg":
+                    original_rpy -= [0.1, 0, 0]
+                updated_rotation = Rotation.from_euler('xyz', original_rpy)
+                updated_quaternions = Quaternion.to_wxyz(updated_rotation.as_quat())
+                updated_orientations.append(updated_quaternions)
+
+            self.link_orientation_targets[link] = np.array(updated_orientations)
 
 
 @dataclass
@@ -309,6 +335,7 @@ class IKElement:
 
         return ik_state.joint_velocity
 
+
 @dataclass
 class IKFinalSol:
     """Class for the full IK solution"""
@@ -316,6 +343,7 @@ class IKFinalSol:
     joint_configuration_sol: np.ndarray = np.zeros(32)
     base_position_sol: np.ndarray = np.zeros(3)
     base_quaternion_sol: np.ndarray = np.zeros(4)
+
 
 @dataclass
 class WBGR:
@@ -367,6 +395,7 @@ class WBGR:
               mirroring: bool = False,
               horizontal_feet: bool = False,
               straight_head: bool = False,
+              wider_legs: bool = False,
               robot_to_target_base_quat: List = None) -> "WBGR":
         """Build an instance of WBGR."""
 
@@ -387,6 +416,10 @@ class WBGR:
         if straight_head:
             # Enforce straight head
             ik_targets.enforce_straight_head()
+
+        if wider_legs:
+            # Enforce wider legs
+            ik_targets.enforce_wider_legs()
 
         return WBGR(icub_urdf=icub_urdf, joints_list=controlled_joints, ik_targets=ik_targets, ik=ik, robot_to_target_base_quat=robot_to_target_base_quat)
 
@@ -434,7 +467,6 @@ class WBGR:
         for i in range(N):
             for j in range(N):
                 self.world_H_base[i][j] = self.initial_rotation_matrix[i][j]
-
 
     def configure_kindyn_descriptors(self) -> None:
         """Setup the kindyn descriptor for desired values."""
@@ -688,6 +720,7 @@ class KFWBGR(WBGR):
               mirroring: bool = False,
               horizontal_feet: bool = False,
               straight_head: bool = False,
+              wider_legs: bool = False,
               robot_to_target_base_quat: List = None,
               kindyn: kindyncomputations.KinDynComputations = None,
               local_foot_vertices_pos: List = None,
@@ -711,6 +744,10 @@ class KFWBGR(WBGR):
         if straight_head:
             # Enforce straight head
             ik_targets.enforce_straight_head()
+
+        if wider_legs:
+            # Enforce wider legs
+            ik_targets.enforce_wider_legs()
 
         kinematic_computations = KinematicComputations.build(kindyn=kindyn, local_foot_vertices_pos=local_foot_vertices_pos, feet_frames=feet_frames)
 
