@@ -83,7 +83,7 @@ scenario.set_verbosity(scenario.Verbosity_warning)
 gazebo, world = init_gazebo_sim()
 
 # Retrieve the robot urdf model
-icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboSimpleCollisionsV2_5_xsens/iCubGazeboSimpleCollisionsV2_5_xsens.urdf")
+icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboV3_xsens/iCubGazeboV3_xsens.urdf")
 
 # Insert the robot in the empty world
 icub = utils.iCub(world=world, urdf=icub_urdf)
@@ -104,8 +104,8 @@ kindyn.set_robot_state_from_model(model=icub, world_gravity=np.array(world.gravi
 # ===================
 
 # Define robot-specific frontal base and chest directions
-frontal_base_dir = utils.define_frontal_base_direction(robot="iCubV2_5")
-frontal_chest_dir = utils.define_frontal_chest_direction(robot="iCubV2_5")
+frontal_base_dir = utils.define_frontal_base_direction(robot="iCubV3")
+frontal_chest_dir = utils.define_frontal_chest_direction(robot="iCubV3")
 
 # Instantiate the features extractor
 extractor = features_extractor.FeaturesExtractor.build(ik_solutions=ik_solutions,
