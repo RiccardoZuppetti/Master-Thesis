@@ -21,8 +21,10 @@ from adherent.trajectory_generation.utils import define_initial_nn_X
 from adherent.trajectory_generation.utils import define_initial_base_yaw
 from adherent.data_processing.utils import define_frontal_base_direction
 from adherent.data_processing.utils import define_frontal_chest_direction
+from adherent.trajectory_generation.utils import define_base_pitch_offset
 from adherent.trajectory_generation.utils import define_initial_base_height
 from adherent.trajectory_generation.utils import define_initial_past_trajectory
+from adherent.trajectory_generation.utils import define_initial_support_foot_and_vertex
 
 import matplotlib as mpl
 mpl.rcParams['toolbar'] = 'None'
@@ -37,12 +39,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--storage_path", help="Path where the generated trajectory will be stored. Relative path from script folder.",
                     type=str, default="../datasets/inference/")
 parser.add_argument("--training_path", help="Path where the training-related data are stored. Relative path from script folder.",
-                    type=str, default="../datasets/training_D2_D3_subsampled_mirrored_4ew_98%/")
+                    type=str, default="../datasets/training_D2_D3_subsampled_mirrored_4ew_98%_50epochs/")
 parser.add_argument("--save_every_N_iterations", help="Data will be saved every N iterations.",
                     type=int, default=1000)
 parser.add_argument("--plot_trajectory_blending", help="Visualize the blending of the future ground trajectory to build the next network input.", action="store_true")
 parser.add_argument("--plot_footsteps", help="Visualize the footsteps.", action="store_true")
 parser.add_argument("--plot_blending_coefficients", help="Visualize blending coefficient activations.", action="store_true")
+parser.add_argument("--time_scaling", help="Time scaling to be applied to the generated trajectory. Keep it integer.",
+                    type=int, default=1)
 
 args = parser.parse_args()
 
@@ -52,6 +56,7 @@ save_every_N_iterations = args.save_every_N_iterations
 plot_trajectory_blending = args.plot_trajectory_blending
 plot_footsteps = args.plot_footsteps
 plot_blending_coefficients = args.plot_blending_coefficients
+time_scaling = args.time_scaling
 
 # ==================
 # YARP CONFIGURATION
@@ -120,6 +125,10 @@ plt.ion()
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
+# Trajectory control and trajectory generation rates
+generation_rate = 1/50
+control_rate = 1/100
+
 # Define robot-specific feet vertices positions in the foot frame
 local_foot_vertices_pos = define_foot_vertices(robot="iCubV3")
 
@@ -140,6 +149,9 @@ frontal_chest_dir = define_frontal_chest_direction(robot="iCubV3")
 # Define robot-specific feet frames
 feet_frames = define_feet_frames(robot="iCubV3")
 
+# Define robot-specific initial support foot and vertex
+initial_support_foot, initial_support_vertex = define_initial_support_foot_and_vertex(robot="iCubV3")
+
 # Instantiate the trajectory generator
 generator = trajectory_generator.TrajectoryGenerator.build(icub=icub, gazebo=gazebo, kindyn=kindyn,
                                                            storage_path=os.path.join(script_directory, storage_path),
@@ -153,11 +165,19 @@ generator = trajectory_generator.TrajectoryGenerator.build(icub=icub, gazebo=gaz
                                                            initial_base_height=initial_base_height,
                                                            initial_base_yaw=initial_base_yaw,
                                                            frontal_base_direction=frontal_base_dir,
-                                                           frontal_chest_direction=frontal_chest_dir)
+                                                           frontal_chest_direction=frontal_chest_dir,
+                                                           initial_support_foot=initial_support_foot,
+                                                           initial_support_vertex=initial_support_vertex,
+                                                           time_scaling=time_scaling,
+                                                           generation_rate=generation_rate,
+                                                           control_rate=control_rate)
 
 # =========
 # MAIN LOOP
 # =========
+
+# Define robot-specific base pitch offset
+base_pitch_offset = define_base_pitch_offset(robot="iCubV3")
 
 with tf.Session(config=config) as sess:
 
@@ -177,8 +197,24 @@ with tf.Session(config=config) as sess:
                                                                         blending_coefficients=blending_coefficients)
 
         # Apply the joint positions and the base orientation from the network output
-        joint_positions, new_base_quaternion = \
-            generator.apply_joint_positions_and_base_orientation(denormalized_current_output=denormalized_current_output)
+        joint_positions, joint_velocities, new_base_quaternion = generator.apply_joint_positions_and_base_orientation(
+            denormalized_current_output=denormalized_current_output,
+            base_pitch_offset=base_pitch_offset)
+
+        # Handle first iteration differently
+        if generator.iteration > 1:
+
+            # Update the support vertex position
+            generator.update_support_vertex_position()
+
+            # Compute kinematically-feasible base position and updated posturals
+            new_base_postural, new_joints_pos_postural, new_joints_vel_postural, new_links_postural, \
+            new_com_pos_postural, new_com_vel_postural, new_centroidal_momentum_postural = \
+                generator.compute_kinematically_fasible_base_and_update_posturals(joint_positions=joint_positions,
+                                                                                  joint_velocities=joint_velocities,
+                                                                                  base_quaternion=new_base_quaternion,
+                                                                                  controlled_joints=controlled_joints,
+                                                                                  link_names=icub.link_names())
 
         # Update the support foot and vertex while detecting new footsteps
         support_foot, update_footsteps_list = generator.update_support_vertex_and_support_foot_and_footsteps()
@@ -186,13 +222,16 @@ with tf.Session(config=config) as sess:
         if update_footsteps_list and plot_footsteps:
 
             # Plot the last footstep
-            generator.plotter.plot_new_footstep(figure_footsteps=figure_footsteps,
+            generator.plotter.plot_new_footstep(feet_frames=feet_frames,
+                                                figure_footsteps=figure_footsteps,
                                                 support_foot=support_foot,
                                                 new_footstep=generator.storage.footsteps[support_foot][-1])
 
         # Compute kinematically-feasible base position and updated posturals
-        new_base_postural, new_joints_postural, new_links_postural, new_com_postural = \
+        new_base_postural, new_joints_pos_postural, new_joints_vel_postural, new_links_postural, \
+        new_com_pos_postural, new_com_vel_postural, new_centroidal_momentum_postural = \
             generator.compute_kinematically_fasible_base_and_update_posturals(joint_positions=joint_positions,
+                                                                              joint_velocities=joint_velocities,
                                                                               base_quaternion=new_base_quaternion,
                                                                               controlled_joints=controlled_joints,
                                                                               link_names=icub.link_names())
@@ -216,9 +255,12 @@ with tf.Session(config=config) as sess:
         # Update storage and periodically save data
         generator.update_storages_and_save(blending_coefficients=current_blending_coefficients,
                                            base_postural=new_base_postural,
-                                           joints_postural=new_joints_postural,
+                                           joints_pos_postural=new_joints_pos_postural,
+                                           joint_vel_postural=new_joints_vel_postural,
                                            links_postural=new_links_postural,
-                                           com_postural=new_com_postural,
+                                           com_pos_postural=new_com_pos_postural,
+                                           com_vel_postural=new_com_vel_postural,
+                                           centroidal_momentum_postural=new_centroidal_momentum_postural,
                                            raw_data=raw_data,
                                            quad_bezier=quad_bezier,
                                            base_velocities=base_velocities,

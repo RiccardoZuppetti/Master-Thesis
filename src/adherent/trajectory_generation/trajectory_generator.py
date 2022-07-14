@@ -20,6 +20,7 @@ from adherent.MANN.utils import denormalize
 from gym_ignition.rbd.conversions import Quaternion
 from adherent.MANN.utils import read_from_file
 from adherent.data_processing.utils import iCub
+from adherent.data_processing.utils import define_feet_frames
 from gym_ignition.rbd.idyntree import kindyncomputations
 from adherent.data_processing.utils import rotation_2D
 from adherent.trajectory_generation.utils import trajectory_blending
@@ -42,14 +43,19 @@ class StorageHandler:
     joystick_input_path: str
     blending_coefficients_path: str
 
+    # Time scaling factor for the trajectory
+    time_scaling: int
+    generation_to_control_time_scaling: int
+
     # Storage dictionaries for footsteps, postural, joystick input and blending coefficients
     footsteps: Dict
-    posturals: Dict = field(default_factory=lambda: {'base': [], 'joints': [], 'links': [], 'com': []})
+    posturals: Dict = field(default_factory=lambda: {'base': [], 'joints_pos': [], 'joints_vel': [], 'links': [], 'com_pos': [], 'com_vel': [], 'centroidal_momentum': []})
     joystick_inputs: Dict = field(default_factory=lambda: {'raw_data': [], 'quad_bezier': [], 'base_velocities': [], 'facing_dirs': []})
     blending_coeffs: Dict = field(default_factory=lambda: {'w_1': [], 'w_2': [], 'w_3': [], 'w_4': []})
 
     @staticmethod
-    def build(storage_path: str, feet_frames: Dict) -> "StorageHandler":
+    def build(storage_path: str, feet_frames: Dict,
+              generation_to_control_time_scaling: int, time_scaling: int = 1) -> "StorageHandler":
         """Build an instance of StorageHandler."""
 
         # Storage paths for the footsteps, postural, joystick input and blending coefficients
@@ -63,23 +69,31 @@ class StorageHandler:
                               postural_path,
                               joystick_input_path,
                               blending_coefficients_path,
-                              footsteps=footsteps)
+                              footsteps=footsteps,
+                              generation_to_control_time_scaling=generation_to_control_time_scaling,
+                              time_scaling=time_scaling)
 
     def update_joystick_inputs_storage(self, raw_data: List, quad_bezier: List, base_velocities: List, facing_dirs: List) -> None:
         """Update the storage of the joystick inputs."""
 
-        self.joystick_inputs["raw_data"].append(raw_data)
-        self.joystick_inputs["quad_bezier"].append(quad_bezier)
-        self.joystick_inputs["base_velocities"].append(base_velocities)
-        self.joystick_inputs["facing_dirs"].append(facing_dirs)
+        # Replicate the joystick inputs at the desired frequency
+        for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+
+            self.joystick_inputs["raw_data"].append(raw_data)
+            self.joystick_inputs["quad_bezier"].append(quad_bezier)
+            self.joystick_inputs["base_velocities"].append(base_velocities)
+            self.joystick_inputs["facing_dirs"].append(facing_dirs)
 
     def update_blending_coefficients_storage(self, blending_coefficients: List) -> None:
         """Update the storage of the blending coefficients."""
 
-        self.blending_coeffs["w_1"].append(float(blending_coefficients[0][0]))
-        self.blending_coeffs["w_2"].append(float(blending_coefficients[0][1]))
-        self.blending_coeffs["w_3"].append(float(blending_coefficients[0][2]))
-        self.blending_coeffs["w_4"].append(float(blending_coefficients[0][3]))
+        # Replicate the blending coefficients at the desired frequency
+        for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+
+            self.blending_coeffs["w_1"].append(float(blending_coefficients[0][0]))
+            self.blending_coeffs["w_2"].append(float(blending_coefficients[0][1]))
+            self.blending_coeffs["w_3"].append(float(blending_coefficients[0][2]))
+            self.blending_coeffs["w_4"].append(float(blending_coefficients[0][3]))
 
     def update_footsteps_storage(self, support_foot: str, footstep: Dict) -> None:
         """Add a footstep to the footsteps storage."""
@@ -91,13 +105,147 @@ class StorageHandler:
 
         self.footsteps = footsteps
 
-    def update_posturals_storage(self, base: Dict, joints: Dict, links: Dict, com: List) -> None:
+    def retrieve_smoothed_dict(self, prev: Dict, next: Dict, steps: int) -> List:
+        """Compute a list of dictionaries which smoothly transition from the previous dictionary to the next one.
+        The list contains as many dictionaries as the specified 'steps' parameter."""
+
+        # Compute how much each entry of the dictionaries should be updated at each smoothing step
+        update = {}
+        for key in prev:
+            update[key] = (next[key] - prev[key]) / steps
+
+        # Fill the smoothed list of dictionaries by iteratively adding the update to the previous dictionary
+        smoothed_list = []
+        curr = prev.copy()
+        for _ in range(steps-1):
+            for key in curr:
+                curr[key] += update[key]
+            smoothed_list.append(curr)
+
+        # Add the next dictionary as last element of the smoothed list
+        smoothed_list.append(next)
+
+        return smoothed_list
+
+    def retrieve_smoothed_3Dsignal(self, prev: List, next: List, steps: int) -> List:
+        """Compute a list of 3D signals which smoothly transition from the previous 3D signal to the next one.
+        The list contains as many 3D signals as the specified 'steps' parameter."""
+
+        # Compute how much the 3D signal should be updated at each smoothing step
+        update = (np.array(next) - np.array(prev)) / steps
+
+        # Fill the smoothed list of 3D signals by iteratively adding the update to the previous 3D signal
+        smoothed_list = []
+        curr = prev.copy()
+        for _ in range(steps-1):
+            curr += update
+            smoothed_list.append(list(curr))
+
+        # Add the next 3D signal as last element of the smoothed list
+        smoothed_list.append(next)
+
+        return smoothed_list
+
+    def update_posturals_storage(self, base: Dict, joints_pos: Dict, joints_vel: Dict,
+                                 links: Dict, com_pos: List, com_vel: List, centroidal_momentum: List) -> None:
         """Update the storage of the posturals."""
 
-        self.posturals["base"].append(base)
-        self.posturals["joints"].append(joints)
-        self.posturals["links"].append(links)
-        self.posturals["com"].append(com)
+
+        # ======
+        # JOINTS
+        # ======
+
+        if self.posturals["joints_pos"] == []:
+
+            # Replicate the joints postural at the first iteration
+            for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+                self.posturals["joints_pos"].append(joints_pos)
+                self.posturals["joints_vel"].append(joints_vel)
+
+        else:
+
+            # Smooth the joints postural at the desired frequency
+            joints_pos_prev = self.posturals["joints_pos"][-1]
+            joints_vel_prev = self.posturals["joints_vel"][-1]
+            smoothed_joints_pos = self.retrieve_smoothed_dict(joints_pos_prev, joints_pos, self.generation_to_control_time_scaling * self.time_scaling)
+            smoothed_joints_vel = self.retrieve_smoothed_dict(joints_vel_prev, joints_vel, self.generation_to_control_time_scaling * self.time_scaling)
+            self.posturals["joints_pos"].extend(smoothed_joints_pos)
+            self.posturals["joints_vel"].extend(smoothed_joints_vel)
+
+        # ====
+        # BASE
+        # ====
+
+        if self.posturals["base"] == []:
+
+            # Replicate the base at the first iteration
+            for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+                self.posturals["base"].append(base)
+
+        else:
+
+            # Smooth the base position at the desired frequency
+            base_pos_prev = self.posturals["base"][-1]["position"].copy()
+            smoothed_base_pos = self.retrieve_smoothed_3Dsignal(base_pos_prev, base["position"], self.generation_to_control_time_scaling * self.time_scaling)
+
+            # Replicate the base orientation at the desired frequency
+            smoothed_base_quat = []
+            for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+                smoothed_base_quat.append(base["wxyz_quaternions"])
+
+            # Fill the smoothed base postural
+            for i in range(len(smoothed_base_quat)):
+                smoothed_base = {"position": smoothed_base_pos[i] , "wxyz_quaternions" : smoothed_base_quat[i]}
+                self.posturals["base"].extend([smoothed_base])
+
+        # ===
+        # COM
+        # ===
+
+        if self.posturals["com_pos"] == []:
+
+            # Replicate the com at the first iteration
+            for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+                self.posturals["com_pos"].append(com_pos)
+                self.posturals["com_vel"].append(com_vel)
+
+        else:
+
+            # Smooth the com at the desired frequency
+            com_pos_prev = self.posturals["com_pos"][-1].copy()
+            com_vel_prev = self.posturals["com_vel"][-1].copy()
+            smoothed_com_pos = self.retrieve_smoothed_3Dsignal(com_pos_prev, com_pos, self.generation_to_control_time_scaling * self.time_scaling)
+            smoothed_com_vel = self.retrieve_smoothed_3Dsignal(com_vel_prev, com_vel, self.generation_to_control_time_scaling * self.time_scaling)
+            self.posturals["com_pos"].extend(smoothed_com_pos)
+            self.posturals["com_vel"].extend(smoothed_com_vel)
+
+            # ===================
+            # CENTROIDAL MOMENTUM
+            # ===================
+
+        if self.posturals["centroidal_momentum"] == []:
+
+            # Replicate the centroidal_momentum at the first iteration
+            for _ in range(self.generation_to_control_time_scaling * self.time_scaling):
+                self.posturals["centroidal_momentum"].append(centroidal_momentum)
+
+        else:
+
+            # Retrieve linear and angular momentum
+            centroidal_momentum_prev = self.posturals["centroidal_momentum"][-1].copy()
+            linear_momentum_prev = centroidal_momentum_prev[0]
+            angular_momentum_prev = centroidal_momentum_prev[1]
+            linear_momentum_next = centroidal_momentum[0]
+            angular_momentum_next = centroidal_momentum[1]
+
+            # Smooth linear and angular momentum at the desired frequency
+            smoothed_linear_momentum = self.retrieve_smoothed_3Dsignal(linear_momentum_prev, linear_momentum_next, self.generation_to_control_time_scaling * self.time_scaling)
+            smoothed_angular_momentum = self.retrieve_smoothed_3Dsignal(angular_momentum_prev, angular_momentum_next, self.generation_to_control_time_scaling * self.time_scaling)
+
+            # Retrieve smoothed centroidal momentum
+            smoothed_centroidal_momentum = [[smoothed_linear_momentum[k], smoothed_angular_momentum[k]] for k in range(len(smoothed_linear_momentum))]
+
+            self.posturals["centroidal_momentum"].extend(smoothed_centroidal_momentum)
 
     def save_data_as_json(self) -> None:
         """Save all the stored data using the json format."""
@@ -129,6 +277,9 @@ class FootstepsExtractor:
     # Define robot-specific feet frames definition
     feet_frames: Dict
 
+    # Time scaling factor for the generated trajectory
+    time_scaling: int
+
     # Auxiliary variables for the footsteps update before saving
     nominal_DS_duration: float
     difference_position_threshold: float
@@ -139,6 +290,7 @@ class FootstepsExtractor:
 
     @staticmethod
     def build(feet_frames: Dict,
+              time_scaling: int = 1,
               nominal_DS_duration: float = 0.04,
               difference_position_threshold: float = 0.04,
               difference_height_norm_threshold: bool = 0.005) -> "FootstepsExtractor":
@@ -147,7 +299,8 @@ class FootstepsExtractor:
         return FootstepsExtractor(feet_frames=feet_frames,
                                   nominal_DS_duration=nominal_DS_duration,
                                   difference_position_threshold=difference_position_threshold,
-                                  difference_height_norm_threshold=difference_height_norm_threshold)
+                                  difference_height_norm_threshold=difference_height_norm_threshold,
+                                  time_scaling=time_scaling)
 
     def should_update_footstep_deactivation_time(self, kindyn: kindyncomputations.KinDynComputations) -> bool:
         """Check whether the deactivation time of the last footstep needs to be updated."""
@@ -201,7 +354,7 @@ class FootstepsExtractor:
         new_footstep["2D_orient"] = W_RPY_SF[2]
 
         # Assign new footstep activation time
-        new_footstep["activation_time"] = activation_time
+        new_footstep["activation_time"] = activation_time * self.time_scaling
 
         # Use a temporary flag indicating that the deactivation time has not been computed yet
         new_footstep["deactivation_time"] = -1
@@ -219,7 +372,7 @@ class FootstepsExtractor:
         # Update the deactivation time of the last footstep of each foot (they need to coincide to be processed
         # properly in the trajectory control layer)
         for foot in footsteps.keys():
-            footsteps[foot][-1]["deactivation_time"] = final_deactivation_time
+            footsteps[foot][-1]["deactivation_time"] = final_deactivation_time * self.time_scaling
 
         # Replace temporary deactivation times in the footsteps list (if any)
         updated_footsteps = self.replace_temporary_deactivation_times(footsteps=footsteps)
@@ -255,7 +408,7 @@ class FootstepsExtractor:
                         if other_foot_activation_time > current_activation_time:
 
                             # Update the deactivation time so to have a double support (DS) phase of the nominal duration
-                            current_deactivation_time = other_foot_activation_time + self.nominal_DS_duration
+                            current_deactivation_time = other_foot_activation_time + self.nominal_DS_duration * self.time_scaling
                             footstep["deactivation_time"] = current_deactivation_time
 
                             break
@@ -300,7 +453,7 @@ class FootstepsExtractor:
 
             # If the last updated footstep ends before the final deactivation time, add the last original footstep
             # to the updated list of footsteps
-            if updated_footsteps[foot][-1]["deactivation_time"] != final_deactivation_time:
+            if updated_footsteps[foot][-1]["deactivation_time"] != final_deactivation_time * self.time_scaling:
                 updated_footsteps[foot].append(footsteps[foot][-1])
 
         return updated_footsteps
@@ -308,7 +461,7 @@ class FootstepsExtractor:
 
 @dataclass
 class PosturalExtractor:
-    """Class to extract the postural from the generated trajectory."""
+    """Class to extract several posturals from the generated trajectory."""
 
     @staticmethod
     def build() -> "PosturalExtractor":
@@ -322,10 +475,14 @@ class PosturalExtractor:
         """Retrieve the information related to a new set of postural terms."""
 
         # Store the postural term related to the base position and orientation
-        new_base_postural = {"postion": list(base_position), "wxyz_quaternions": list(base_quaternion)}
+        new_base_postural = {"position": list(base_position), "wxyz_quaternions": list(base_quaternion)}
 
         # Store the postural term related to the joint angles
-        new_joints_postural = {controlled_joints[k]: joint_positions[k] for k in range(len(controlled_joints))}
+        new_joints_pos_postural = {controlled_joints[k]: joint_positions[k] for k in range(len(controlled_joints))}
+
+        # Store the postural term related to the joint velocities
+        joint_velocities = kindyn.get_joint_velocities()
+        new_joints_vel_postural = {controlled_joints[k]: joint_velocities[k] for k in range(len(controlled_joints))}
 
         # Store the postural term related to the link orientations
         new_links_postural = {}
@@ -336,9 +493,17 @@ class PosturalExtractor:
             new_links_postural[link_name] = list(Quaternion.from_matrix(world_H_link[0:3, 0:3]))
 
         # Store the postural term related to the com positions
-        new_com_postural = list(kindyn.get_com_position())
+        new_com_pos_postural = list(kindyn.get_com_position())
 
-        return new_base_postural, new_joints_postural, new_links_postural, new_com_postural
+        # Store the postural term related to the com velocities
+        new_com_vel_postural = list(kindyn.get_com_velocity())
+
+        # Store the postural term related to the centroidal momentum
+        centroidal_momentum = list(kindyn.get_centroidal_momentum())
+        new_centroidal_momentum_postural = [list(centroidal_momentum[0]), list(centroidal_momentum[1])]
+
+        return new_base_postural, new_joints_pos_postural, new_joints_vel_postural, new_links_postural, \
+               new_com_pos_postural, new_com_vel_postural, new_centroidal_momentum_postural
 
 
 @dataclass
@@ -363,8 +528,8 @@ class KinematicComputations:
     feet_frames: Dict
     support_foot_prev: str
     support_foot: str
-    support_vertex_prev: int = 0
-    support_vertex: int = 0
+    support_vertex_prev: int
+    support_vertex: int
     support_foot_pos: float = 0
     support_vertex_pos: float = 0
     support_vertex_offset: float = 0
@@ -375,6 +540,9 @@ class KinematicComputations:
               feet_frames: Dict,
               icub: iCub,
               gazebo: scenario.GazeboSimulator,
+              initial_support_foot: str,
+              initial_support_vertex: int,
+              time_scaling: int,
               nominal_DS_duration: float = 0.04,
               difference_position_threshold: float = 0.04,
               difference_height_norm_threshold: bool = 0.005) -> "KinematicComputations":
@@ -383,7 +551,8 @@ class KinematicComputations:
         footsteps_extractor = FootstepsExtractor.build(feet_frames=feet_frames,
                                                        nominal_DS_duration=nominal_DS_duration,
                                                        difference_position_threshold=difference_position_threshold,
-                                                       difference_height_norm_threshold=difference_height_norm_threshold)
+                                                       difference_height_norm_threshold=difference_height_norm_threshold,
+                                                       time_scaling=time_scaling)
         postural_extractor = PosturalExtractor.build()
 
         return KinematicComputations(kindyn=kindyn,
@@ -391,8 +560,10 @@ class KinematicComputations:
                                      postural_extractor=postural_extractor,
                                      local_foot_vertices_pos=local_foot_vertices_pos,
                                      feet_frames=feet_frames,
-                                     support_foot_prev=feet_frames["right_foot"],
-                                     support_foot=feet_frames["right_foot"],
+                                     support_foot_prev=feet_frames[initial_support_foot],
+                                     support_foot=feet_frames[initial_support_foot],
+                                     support_vertex_prev=initial_support_vertex,
+                                     support_vertex=initial_support_vertex,
                                      icub=icub,
                                      controlled_joints=icub.joint_names(),
                                      gazebo=gazebo)
@@ -471,6 +642,7 @@ class KinematicComputations:
 
     def reset_robot_configuration(self,
                                   joint_positions: List,
+                                  joint_velocities: List,
                                   base_position: List,
                                   base_quaternion: List) -> None:
         """Reset the robot configuration."""
@@ -479,7 +651,7 @@ class KinematicComputations:
             position=np.array(base_position),
             quaternion=np.array(base_quaternion)).asHomogeneousTransform().toNumPy()
 
-        self.kindyn.set_robot_state(s=joint_positions, ds=np.zeros(len(joint_positions)), world_H_base=world_H_base)
+        self.kindyn.set_robot_state(s=joint_positions, ds=joint_velocities, world_H_base=world_H_base)
 
     def reset_visual_robot_configuration(self,
                                          joint_positions: List = None,
@@ -504,6 +676,7 @@ class KinematicComputations:
 
     def compute_and_apply_kinematically_feasible_base_position(self,
                                                                joint_positions: List,
+                                                               joint_velocities: List,
                                                                base_quaternion: List) -> List:
         """Compute kinematically-feasible base position and update the robot configuration."""
 
@@ -512,6 +685,7 @@ class KinematicComputations:
 
         # Update the base position in the robot configuration
         self.reset_robot_configuration(joint_positions=joint_positions,
+                                       joint_velocities=joint_velocities,
                                        base_position=kinematically_feasible_base_pos,
                                        base_quaternion=base_quaternion)
 
@@ -557,6 +731,15 @@ class KinematicComputations:
         kinematically_feasible_base_position = mixed_pos_B + self.support_vertex_offset
 
         return kinematically_feasible_base_position
+
+    def update_support_vertex_pos(self) -> None:
+        """Update the support vertex position."""
+
+        # Retrieve the vertices positions in the world frame
+        W_vertices_positions = self.compute_W_vertices_pos()
+
+        # Update the support vertex position
+        self.support_vertex_pos = W_vertices_positions[self.support_vertex]
 
     def update_support_vertex_and_support_foot(self) -> (str, bool, bool):
         """Update the support vertex and the support foot. Also, return boolean variables indicating whether the
@@ -666,13 +849,13 @@ class Plotter:
         plt.xlabel("Time [s]")
 
     @staticmethod
-    def plot_new_footstep(figure_footsteps: int, support_foot: str, new_footstep: Dict) -> None:
+    def plot_new_footstep(feet_frames: Dict, figure_footsteps: int, support_foot: str, new_footstep: Dict) -> None:
         """Plot a new footstep just added to the footsteps list."""
 
         plt.figure(figure_footsteps)
 
         # Plot left footsteps in blue, right footsteps in red
-        colors = {self.feet_frames["left_foot"]: 'b', self.feet_frames["right_foot"]: 'r'}
+        colors = {feet_frames["left_foot"]: 'b', feet_frames["right_foot"]: 'r'}
 
         # Footstep position
         plt.scatter(new_footstep["2D_pos"][1], -new_footstep["2D_pos"][0], c=colors[support_foot])
@@ -1387,8 +1570,8 @@ class TrajectoryGenerator:
     model: LearnedModel
 
     # Iteration counter and generation rate
+    generation_rate: float
     iteration: int = 0
-    generation_rate: float = 1/50
 
     @staticmethod
     def build(icub: iCub,
@@ -1406,6 +1589,9 @@ class TrajectoryGenerator:
               initial_base_yaw: float,
               frontal_base_direction: List,
               frontal_chest_direction: List,
+              initial_support_foot: str,
+              initial_support_vertex: int,
+              time_scaling: int,
               nominal_DS_duration: float = 0.04,
               difference_position_threshold: float = 0.04,
               difference_height_norm_threshold: bool = 0.005,
@@ -1417,7 +1603,9 @@ class TrajectoryGenerator:
               ellipsoid_forward_axis: float = 1.0,
               ellipsoid_side_axis: float = 0.9,
               ellipsoid_backward_axis: float = 0.6,
-              ellipsoid_scaling: float = 0.4) -> "TrajectoryGenerator":
+              ellipsoid_scaling: float = 0.4,
+              generation_rate: float = 1/50,
+              control_rate: float = 1/100) -> "TrajectoryGenerator":
         """Build an instance of TrajectoryGenerator."""
 
         # Build the kinematic computations handler component
@@ -1426,15 +1614,20 @@ class TrajectoryGenerator:
                                                       feet_frames=feet_frames,
                                                       icub=icub,
                                                       gazebo=gazebo,
+                                                      initial_support_foot=initial_support_foot,
+                                                      initial_support_vertex=initial_support_vertex,
                                                       nominal_DS_duration=nominal_DS_duration,
                                                       difference_position_threshold=difference_position_threshold,
-                                                      difference_height_norm_threshold=difference_height_norm_threshold)
+                                                      difference_height_norm_threshold=difference_height_norm_threshold,
+                                                      time_scaling=time_scaling)
 
         # Initialize the support vertex and the support foot
         kincomputations.set_initial_support_vertex_and_support_foot()
 
         # Build the storage handler component
-        storage = StorageHandler.build(storage_path=storage_path, feet_frames=feet_frames)
+        generation_to_control_time_scaling = int(generation_rate / control_rate)
+        storage = StorageHandler.build(storage_path=storage_path, feet_frames=feet_frames, time_scaling=time_scaling,
+                                       generation_to_control_time_scaling=generation_to_control_time_scaling)
 
         # Build the autoregression handler component
         autoregression = Autoregression.build(training_path=training_path,
@@ -1465,7 +1658,8 @@ class TrajectoryGenerator:
                                    storage=storage,
                                    autoregression=autoregression,
                                    plotter=plotter,
-                                   model=model)
+                                   model=model,
+                                   generation_rate=generation_rate)
 
     def restore_model_and_retrieve_tensors(self, session: tf.Session) -> (tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor):
         """Restore the learned model and retrieve the tensors of interest."""
@@ -1494,11 +1688,15 @@ class TrajectoryGenerator:
 
         return current_output, denormalized_current_output, current_blending_coefficients
 
-    def apply_joint_positions_and_base_orientation(self, denormalized_current_output: List) -> (List, List):
+    def apply_joint_positions_and_base_orientation(self, denormalized_current_output: List,
+                                                   base_pitch_offset: float = 0) -> (List, List):
         """Apply joint positions and base orientation from the output returned by the network."""
 
         # Extract the new joint positions from the denormalized network output
         joint_positions = np.asarray(denormalized_current_output[36:68])
+
+        # Extract the joint velocities from the denormalized network output
+        joint_velocities = np.asarray(denormalized_current_output[68:100])
 
         # If the robot is stopped, handle unnatural in-place rotations by imposing zero angular base velocity
         if self.autoregression.stopped:
@@ -1509,11 +1707,12 @@ class TrajectoryGenerator:
         # Extract the new base orientation from the output
         base_yaw_dot = omega * self.generation_rate
         new_base_yaw = self.autoregression.current_base_yaw + base_yaw_dot
-        new_base_rotation = Rotation.from_euler('xyz', [0, 0, new_base_yaw])
+        new_base_rotation = Rotation.from_euler('xyz', [0, base_pitch_offset, new_base_yaw])
         new_base_quaternion = Quaternion.to_wxyz(new_base_rotation.as_quat())
 
         # Update the base orientation and the joint positions in the robot configuration
         self.kincomputations.reset_robot_configuration(joint_positions=joint_positions,
+                                                       joint_velocities=joint_velocities,
                                                        base_position=self.autoregression.current_base_position,
                                                        base_quaternion=new_base_quaternion)
 
@@ -1524,7 +1723,12 @@ class TrajectoryGenerator:
         # Update the base yaw in the autoregression state
         self.autoregression.new_base_yaw = new_base_yaw
 
-        return joint_positions, new_base_quaternion
+        return joint_positions, joint_velocities, new_base_quaternion
+
+    def update_support_vertex_position(self) -> None:
+        """Update the support vertex position."""
+
+        self.kincomputations.update_support_vertex_pos()
 
     def update_support_vertex_and_support_foot_and_footsteps(self) -> (str, bool):
         """Update the support vertex and the support foot. Handle updates of the footsteps list and of the deactivation
@@ -1559,7 +1763,7 @@ class TrajectoryGenerator:
 
         return support_foot, update_footsteps_list
 
-    def compute_kinematically_fasible_base_and_update_posturals(self, joint_positions: List,
+    def compute_kinematically_fasible_base_and_update_posturals(self, joint_positions: List, joint_velocities: List,
                                                                 base_quaternion: List, controlled_joints: List,
                                                                 link_names: List) -> (List, List, List, List):
         """Compute kinematically-feasible base position and retrieve updated posturals."""
@@ -1567,10 +1771,12 @@ class TrajectoryGenerator:
         # Compute and apply kinematically-feasible base position
         kinematically_feasible_base_position = \
             self.kincomputations.compute_and_apply_kinematically_feasible_base_position( joint_positions=joint_positions,
+                                                                                         joint_velocities=joint_velocities,
                                                                                          base_quaternion=base_quaternion)
 
         # Retrieve new posturals to be added to the list of posturals
-        new_base_postural, new_joints_postural, new_links_postural, new_com_postural = \
+        new_base_postural, new_joints_pos_postural, new_joints_vel_postural, new_links_postural, \
+        new_com_pos_postural, new_com_vel_postural, new_centroidal_momentum_postural = \
             self.kincomputations.postural_extractor.create_new_posturals(base_position=kinematically_feasible_base_position,
                                                                          base_quaternion=base_quaternion,
                                                                          joint_positions=joint_positions,
@@ -1578,7 +1784,8 @@ class TrajectoryGenerator:
                                                                          kindyn=self.kincomputations.kindyn,
                                                                          link_names=link_names)
 
-        return new_base_postural, new_joints_postural, new_links_postural, new_com_postural
+        return new_base_postural, new_joints_pos_postural, new_joints_vel_postural, new_links_postural, \
+               new_com_pos_postural, new_com_vel_postural, new_centroidal_momentum_postural
 
     def retrieve_joystick_inputs(self, input_port: yarp.BufferedPortBottle, quad_bezier: List, base_velocities: List,
                                  facing_dirs: List, raw_data: List) -> (List, List, List, List):
@@ -1651,17 +1858,20 @@ class TrajectoryGenerator:
 
         return blended_base_positions, blended_facing_dirs, blended_base_velocities
 
-    def update_storages_and_save(self, blending_coefficients: List, base_postural: List, joints_postural: List,
-                                 links_postural: List, com_postural: List, raw_data: List, quad_bezier: List,
-                                 base_velocities: List, facing_dirs: List, save_every_N_iterations: int) -> None:
+    def update_storages_and_save(self, blending_coefficients: List, base_postural: List, joints_pos_postural: List,
+                                 joint_vel_postural: List, links_postural: List, com_pos_postural: List,
+                                 com_vel_postural: List, centroidal_momentum_postural: List, raw_data: List,
+                                 quad_bezier: List, base_velocities: List, facing_dirs: List, save_every_N_iterations: int) -> None:
         """Update the blending coefficients, posturals and joystick input storages and periodically save data."""
 
         # Update the blending coefficients storage
         self.storage.update_blending_coefficients_storage(blending_coefficients=blending_coefficients)
 
         # Update the posturals storage
-        self.storage.update_posturals_storage(base=base_postural, joints=joints_postural,
-                                              links=links_postural, com=com_postural)
+        self.storage.update_posturals_storage(base=base_postural, joints_pos=joints_pos_postural,
+                                              joints_vel=joint_vel_postural, links=links_postural,
+                                              com_pos=com_pos_postural, com_vel=com_vel_postural,
+                                              centroidal_momentum=centroidal_momentum_postural)
 
         # Update joystick inputs storage
         self.storage.update_joystick_inputs_storage(raw_data=raw_data, quad_bezier=quad_bezier,

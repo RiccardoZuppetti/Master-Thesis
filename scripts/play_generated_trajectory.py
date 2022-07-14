@@ -12,6 +12,7 @@ from scenario import gazebo as scenario
 from gym_ignition.utils.scenario import init_gazebo_sim
 from adherent.data_processing.utils import iCub
 from adherent.trajectory_generation.utils import SphereURDF
+from adherent.data_processing.utils import define_feet_frames
 from adherent.trajectory_generation.utils import Shape
 from adherent.trajectory_generation.utils import visualize_generated_motion
 
@@ -23,16 +24,25 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--storage_path", help="Path where the generated trajectory is stored. Relative path from script folder.",
                     type=str, default="../datasets/inference/")
-parser.add_argument("--deactivate_blending_coeffs_plot", help="Deactivate plot of the blending coefficients.", action="store_true")
+parser.add_argument("--plot_blending_coeffs", help="Activate plot of the blending coefficients.", action="store_true")
+parser.add_argument("--plot_joystick_inputs", help="Activate plot of the joystick inputs.", action="store_true")
+parser.add_argument("--plot_com", help="Activate plot of the CoM position and velocity.", action="store_true")
+parser.add_argument("--plot_momentum", help="Activate plot of the linear and angular centroidal momentum.", action="store_true")
 
 args = parser.parse_args()
 
 storage_path = args.storage_path
-plot_blending_coeffs = not args.deactivate_blending_coeffs_plot
+plot_blending_coeffs = args.plot_blending_coeffs
+plot_joystick_inputs = args.plot_joystick_inputs
+plot_com = args.plot_com
+plot_momentum = args.plot_momentum
 
 # ===============================
 # LOAD TRAJECTORY GENERATION DATA
 # ===============================
+
+# Define robot-specific feet frames
+feet_frames = define_feet_frames(robot="iCubV3")
 
 # Define the paths for the generated postural, footsteps, joystick inputs and blending coefficients
 script_directory = os.path.dirname(os.path.abspath(__file__))
@@ -49,8 +59,8 @@ with open(postural_path, 'r') as openfile:
 # Load generated footsteps
 with open(footsteps_path, 'r') as openfile:
     footsteps = json.load(openfile)
-    l_footsteps = footsteps["l_foot"]
-    r_footsteps = footsteps["r_foot"]
+    l_footsteps = footsteps[feet_frames["left_foot"]]
+    r_footsteps = footsteps[feet_frames["right_foot"]]
 
 # Load joystick inputs (motion and facing directions) associated to the generated trajectory
 with open(joystick_input_path, 'r') as openfile:
@@ -77,7 +87,7 @@ scenario.set_verbosity(scenario.Verbosity_warning)
 gazebo, world = init_gazebo_sim()
 
 # Retrieve the robot urdf model
-icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboSimpleCollisionsV2_5_xsens/iCubGazeboSimpleCollisionsV2_5_xsens.urdf")
+icub_urdf = os.path.join(script_directory, "../src/adherent/model/iCubGazeboV3_xsens/iCubGazeboV3_xsens.urdf")
 
 # Insert the robot in the empty world
 icub = iCub(world=world, urdf=icub_urdf)
@@ -124,7 +134,9 @@ for ground_r_footstep in ground_r_footsteps:
 input("Press Enter to start the visualization of the generated trajectory.")
 visualize_generated_motion(icub=icub, gazebo=gazebo, posturals=posturals,
                            raw_data=raw_data, blending_coeffs=blending_coeffs,
-                           plot_blending_coeffs=plot_blending_coeffs)
+                           plot_blending_coeffs=plot_blending_coeffs,
+                           plot_joystick_inputs=plot_joystick_inputs,
+                           plot_com=plot_com, plot_momentum=plot_momentum)
 
 
 
