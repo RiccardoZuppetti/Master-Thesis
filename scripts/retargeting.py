@@ -105,8 +105,8 @@ controlled_joints = icub.joint_names()
 # RETARGETING
 # ===========
 
-# Define robot-specific feet frames
-feet_frames = utils.define_feet_frames(robot="iCubV3")
+# Define robot-specific feet frames and links
+feet_frames, feet_links = utils.define_feet_frames_and_links(robot="iCubV3")
 
 # Define robot-specific feet vertices positions in the foot frame
 local_foot_vertices_pos = utils.define_foot_vertices(robot="iCubV3")
