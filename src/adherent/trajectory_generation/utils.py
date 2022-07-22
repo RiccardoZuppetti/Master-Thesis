@@ -598,8 +598,8 @@ def define_initial_support_foot_and_vertex(robot: str) -> List:
         initial_support_vertex = 0
 
     elif robot == "iCubV3":
-        initial_support_foot = "left_foot"
-        initial_support_vertex = 1
+        initial_support_foot = "right_foot"
+        initial_support_vertex = 0
 
     else:
         raise Exception("Initial support foot and vertex only defined for iCubV2_5 and iCubV3.")
@@ -729,6 +729,10 @@ def visualize_generated_motion(icub: iCub,
         # Debug
         print(frame_idx, "/", len(joint_pos_posturals))
 
+        # Plot configuration
+        xticks = [i for i in range(0, frame_idx, 100)]
+        xtick_labels = [str(i / 100) for i in range(0, frame_idx, 100)]
+
         # ======================
         # VISUALIZE ROBOT MOTION
         # ======================
@@ -832,6 +836,7 @@ def visualize_generated_motion(icub: iCub,
             plt.plot(range(len(curr_w_4)), curr_w_4, 'y')
 
             # Plot configuration
+            plt.xticks(xticks, xtick_labels)
             plt.title("Blending coefficients profiles")
             plt.xlim([0, len(w_1)])
             plt.ylabel("Blending coefficients")
@@ -851,13 +856,14 @@ def visualize_generated_motion(icub: iCub,
                 plt.figure(4)
                 plt.clf()
 
-                plt.plot(range(len(com_pos_postural_x)), com_pos_postural_x, label='com_pos_postural_x', color='r')
-                plt.plot(range(len(com_pos_postural_y)), com_pos_postural_y, label='com_pos_postural_y', color='y')
-                plt.plot(range(len(com_pos_postural_z)), com_pos_postural_z, label='com_pos_postural_z', color='b')
+                plt.plot(range(len(com_pos_postural_x)), com_pos_postural_x, label='x', color='r')
+                plt.plot(range(len(com_pos_postural_y)), com_pos_postural_y, label='y', color='y')
+                plt.plot(range(len(com_pos_postural_z)), com_pos_postural_z, label='z', color='b')
 
                 # Plot configuration
+                plt.xticks(xticks, xtick_labels)
                 plt.title("Com positions")
-                plt.ylabel("CoM positions")
+                plt.ylabel("CoM positions [m]")
                 plt.xlabel("Time [s]")
                 plt.legend()
 
@@ -875,13 +881,14 @@ def visualize_generated_motion(icub: iCub,
                 plt.figure(5)
                 plt.clf()
 
-                plt.plot(range(len(com_vel_postural_x)), com_vel_postural_x, label='com_vel_postural_x', color='r')
-                plt.plot(range(len(com_vel_postural_y)), com_vel_postural_y, label='com_vel_postural_y', color='y')
-                plt.plot(range(len(com_vel_postural_z)), com_vel_postural_z, label='com_vel_postural_z', color='b')
+                plt.plot(range(len(com_vel_postural_x)), com_vel_postural_x, label='x', color='r')
+                plt.plot(range(len(com_vel_postural_y)), com_vel_postural_y, label='y', color='y')
+                plt.plot(range(len(com_vel_postural_z)), com_vel_postural_z, label='z', color='b')
 
                 # Plot configuration
+                plt.xticks(xticks, xtick_labels)
                 plt.title("Com velocities")
-                plt.ylabel("CoM velocities")
+                plt.ylabel("CoM velocities [m/s]")
                 plt.xlabel("Time [s]")
                 plt.legend()
 
@@ -900,16 +907,14 @@ def visualize_generated_motion(icub: iCub,
                 plt.figure(6)
                 plt.clf()
 
-                plt.plot(range(len(linear_momentum_postural_x)), linear_momentum_postural_x,
-                         label='linear_momentum_postural_x', color='r')
-                plt.plot(range(len(linear_momentum_postural_y)), linear_momentum_postural_y,
-                         label='linear_momentum_postural_y', color='y')
-                plt.plot(range(len(linear_momentum_postural_z)), linear_momentum_postural_z,
-                         label='linear_momentum_postural_z', color='b')
+                plt.plot(range(len(linear_momentum_postural_x)), linear_momentum_postural_x, label='x', color='r')
+                plt.plot(range(len(linear_momentum_postural_y)), linear_momentum_postural_y, label='y', color='y')
+                plt.plot(range(len(linear_momentum_postural_z)), linear_momentum_postural_z, label='z', color='b')
 
                 # Plot configuration
+                plt.xticks(xticks, xtick_labels)
                 plt.title("Linear momentum")
-                plt.ylabel("Linear momentum")
+                plt.ylabel("Linear momentum [kg * m/s]")
                 plt.xlabel("Time [s]")
                 plt.legend()
 
@@ -927,17 +932,15 @@ def visualize_generated_motion(icub: iCub,
                 plt.figure(7)
                 plt.clf()
 
-                plt.plot(range(len(angular_momentum_postural_x)), angular_momentum_postural_x,
-                         label='angular_momentum_postural_x', color='r')
-                plt.plot(range(len(angular_momentum_postural_y)), angular_momentum_postural_y,
-                         label='angular_momentum_postural_y', color='y')
-                plt.plot(range(len(angular_momentum_postural_z)), angular_momentum_postural_z,
-                         label='angular_momentum_postural_z', color='b')
+                plt.plot(range(len(angular_momentum_postural_x)), angular_momentum_postural_x, label='x', color='r')
+                plt.plot(range(len(angular_momentum_postural_y)), angular_momentum_postural_y, label='y', color='y')
+                plt.plot(range(len(angular_momentum_postural_z)), angular_momentum_postural_z, label='z', color='b')
 
                 # Plot configuration
+                plt.xticks(xticks, xtick_labels)
                 plt.title("Angular momentum")
-                plt.ylabel("Angular momentum")
-                plt.xlabel("Time [s]")
+                plt.ylabel("Angular momentum [kg * m * m/s]")
+                plt.xlabel("Time [s/]")
                 plt.legend()
 
         if plot_blending_coeffs or plot_joystick_inputs or plot_com or plot_momentum:

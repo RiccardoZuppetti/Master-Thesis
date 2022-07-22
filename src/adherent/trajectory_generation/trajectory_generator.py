@@ -10,6 +10,7 @@ import math
 import json
 import yarp
 import numpy as np
+import manifpy as manif
 from typing import List, Dict
 from scenario import gazebo as scenario
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ from adherent.MANN.utils import denormalize
 from gym_ignition.rbd.conversions import Quaternion
 from adherent.MANN.utils import read_from_file
 from adherent.data_processing.utils import iCub
-from adherent.data_processing.utils import define_feet_frames
+import bipedal_locomotion_framework.bindings as blf
 from gym_ignition.rbd.idyntree import kindyncomputations
 from adherent.data_processing.utils import rotation_2D
 from adherent.trajectory_generation.utils import trajectory_blending
@@ -47,6 +48,9 @@ class StorageHandler:
     time_scaling: int
     generation_to_control_time_scaling: int
 
+    # Auxiliary variable
+    feet_frames: Dict
+
     # Storage dictionaries for footsteps, postural, joystick input and blending coefficients
     footsteps: Dict
     posturals: Dict = field(default_factory=lambda: {'base': [], 'joints_pos': [], 'joints_vel': [], 'links': [], 'com_pos': [], 'com_vel': [], 'centroidal_momentum': []})
@@ -69,6 +73,7 @@ class StorageHandler:
                               postural_path,
                               joystick_input_path,
                               blending_coefficients_path,
+                              feet_frames=feet_frames,
                               footsteps=footsteps,
                               generation_to_control_time_scaling=generation_to_control_time_scaling,
                               time_scaling=time_scaling)
@@ -247,6 +252,159 @@ class StorageHandler:
 
             self.posturals["centroidal_momentum"].extend(smoothed_centroidal_momentum)
 
+    def retrieve_contacts(self, plot_contacts: bool = False) -> blf.contacts.ContactPhaseList:
+        """Retrieve planned contacts from the generated trajectory, and optionally plot them."""
+
+        # Footsteps list
+        contact_phase_list: blf.contacts.ContactPhaseList
+
+        # Create the map of contact lists
+        contact_list_map = dict()
+        contact_list_map[self.feet_frames["left_foot"]] = blf.contacts.ContactList()
+        contact_list_map[self.feet_frames["right_foot"]] = blf.contacts.ContactList()
+
+        # Retrieve footsteps
+        l_contacts = self.footsteps[self.feet_frames["left_foot"]]
+        r_contacts = self.footsteps[self.feet_frames["right_foot"]]
+
+        if plot_contacts:
+            # Storage fot plotting
+            left_footsteps_x = []
+            left_footsteps_y = []
+            right_footsteps_x = []
+            right_footsteps_y = []
+
+        # ================
+        # INITIAL CONTACTS
+        # ================
+
+        # Retrieve first left contact position
+        ground_l_foot_position = [l_contacts[0]["2D_pos"][0], l_contacts[0]["2D_pos"][1], 0]
+        ground_l_foot_position_gazebo = [0, 0.08, 0]  # TODO: is this ok also for iCubGazeboV3?
+        ground_l_foot_position_offset = np.array(ground_l_foot_position_gazebo) - np.array(ground_l_foot_position)
+        ground_l_foot_position += np.array(ground_l_foot_position_offset)
+
+        # Retrieve first left contact orientation
+        l_foot_yaw = l_contacts[0]["2D_orient"]
+        l_foot_RPY = [0.0, 0.0, l_foot_yaw]
+        l_foot_rot = Rotation.from_euler('xyz', l_foot_RPY)
+        l_foot_quat = l_foot_rot.as_quat()
+        l_deactivation_time = self.time_scaling * (l_contacts[0]["deactivation_time"])
+
+        # Retrieve first right contact position
+        ground_r_foot_position = [r_contacts[0]["2D_pos"][0], r_contacts[0]["2D_pos"][1], 0]
+        ground_r_foot_position_gazebo = [0, -0.08, 0]  # TODO: is this ok also for iCubGazeboV3?
+        ground_r_foot_position_offset = np.array(ground_r_foot_position_gazebo) - np.array(ground_r_foot_position)
+        ground_r_foot_position += np.array(ground_r_foot_position_offset)
+
+        # Retrieve first right contact orientation
+        r_foot_yaw = r_contacts[0]["2D_orient"]
+        r_foot_RPY = [0.0, 0.0, r_foot_yaw]
+        r_foot_rot = Rotation.from_euler('xyz', r_foot_RPY)
+        r_foot_quat = r_foot_rot.as_quat()
+        r_deactivation_time = self.time_scaling * (r_contacts[0]["deactivation_time"])
+
+        # Add initial left and right contacts to the list
+        assert contact_list_map[self.feet_frames["left_foot"]].add_contact(
+            transform=manif.SE3(position=np.array(ground_l_foot_position),
+                                quaternion=l_foot_quat),
+            activation_time=0.0,
+            deactivation_time=l_deactivation_time)
+        assert contact_list_map[self.feet_frames["right_foot"]].add_contact(
+            transform=manif.SE3(position=np.array(ground_r_foot_position),
+                                quaternion=r_foot_quat),
+            activation_time=0.0,
+            deactivation_time=r_deactivation_time)
+
+        # =============
+        # LEFT CONTACTS
+        # =============
+
+        if plot_contacts:
+            # Update storage for plotting
+            left_footsteps_x.append(ground_l_foot_position[0])
+            left_footsteps_y.append(ground_l_foot_position[1])
+
+        for contact in l_contacts[1:]:
+
+            # Retrieve position
+            ground_l_foot_position = [contact["2D_pos"][0], contact["2D_pos"][1], 0]
+            ground_l_foot_position += np.array(ground_l_foot_position_offset)
+
+            if plot_contacts:
+                # Update storage for plotting
+                left_footsteps_x.append(ground_l_foot_position[0])
+                left_footsteps_y.append(ground_l_foot_position[1])
+
+            # Retrieve orientation and timing
+            l_foot_RPY = [0.0, 0.0, contact["2D_orient"]]
+            l_foot_rot = Rotation.from_euler('xyz', l_foot_RPY)
+            l_foot_quat = l_foot_rot.as_quat()
+            l_activation_time = self.time_scaling * (contact["activation_time"])
+            l_deactivation_time = self.time_scaling * (contact["deactivation_time"])
+
+            # Add the contact
+            assert contact_list_map[self.feet_frames["left_foot"]].add_contact(
+                transform=manif.SE3(position=np.array(ground_l_foot_position), quaternion=l_foot_quat),
+                activation_time=l_activation_time,
+                deactivation_time=l_deactivation_time)
+
+        # ==============
+        # RIGHT CONTACTS
+        # ==============
+
+        if plot_contacts:
+            # Update storage for plotting
+            right_footsteps_x.append(ground_r_foot_position[0])
+            right_footsteps_y.append(ground_r_foot_position[1])
+
+        for contact in r_contacts[1:]:
+
+            # Retrieve position
+            ground_r_foot_position = [contact["2D_pos"][0], contact["2D_pos"][1], 0]
+            ground_r_foot_position += np.array(ground_r_foot_position_offset)
+
+            if plot_contacts:
+                # Update storage for plotting
+                right_footsteps_x.append(ground_r_foot_position[0])
+                right_footsteps_y.append(ground_r_foot_position[1])
+
+            # Retrieve orientation and timing
+            r_foot_RPY = [0.0, 0.0, contact["2D_orient"]]
+            r_foot_rot = Rotation.from_euler('xyz', r_foot_RPY)
+            r_foot_quat = r_foot_rot.as_quat()
+            r_activation_time = self.time_scaling * (contact["activation_time"])
+            r_deactivation_time = self.time_scaling * (contact["deactivation_time"])
+
+            # Add the contact
+            assert contact_list_map[self.feet_frames["right_foot"]].add_contact(
+                transform=manif.SE3(position=np.array(ground_r_foot_position), quaternion=r_foot_quat),
+                activation_time=r_activation_time,
+                deactivation_time=r_deactivation_time)
+
+        # ====
+        # PLOT
+        # ====
+
+        if plot_contacts:
+            # Plot contacts
+            plt.figure()
+            plt.plot(left_footsteps_x, left_footsteps_y, 'b', label='left contacts')
+            plt.plot(right_footsteps_x, right_footsteps_y, 'r', label='right contacts')
+            plt.scatter(left_footsteps_x, left_footsteps_y, c='b')
+            plt.scatter(right_footsteps_x, right_footsteps_y, c='r')
+            plt.legend()
+            plt.title("Contacts")
+            plt.axis("equal")
+            plt.show(block=False)
+            plt.pause(0.5)
+
+        # Assign contact list
+        contact_phase_list = blf.contacts.ContactPhaseList()
+        contact_phase_list.set_lists(contact_lists=contact_list_map)
+
+        return contact_phase_list
+
     def save_data_as_json(self) -> None:
         """Save all the stored data using the json format."""
 
@@ -283,6 +441,7 @@ class FootstepsExtractor:
     # Auxiliary variables for the footsteps update before saving
     nominal_DS_duration: float
     difference_position_threshold: float
+    difference_time_threshold: float
 
     # Auxiliary variables to handle the footsteps deactivation time
     difference_height_norm_threshold: bool
@@ -293,12 +452,17 @@ class FootstepsExtractor:
               time_scaling: int = 1,
               nominal_DS_duration: float = 0.04,
               difference_position_threshold: float = 0.04,
+              difference_time_threshold: float = 0.25,  # TODO: tune
               difference_height_norm_threshold: bool = 0.005) -> "FootstepsExtractor":
         """Build an instance of FootstepsExtractor."""
+
+        # Scale the time threshold for close footsteps depending on the time scaling of the entire trajectory
+        scaled_difference_time_threshold = time_scaling * difference_time_threshold
 
         return FootstepsExtractor(feet_frames=feet_frames,
                                   nominal_DS_duration=nominal_DS_duration,
                                   difference_position_threshold=difference_position_threshold,
+                                  difference_time_threshold=scaled_difference_time_threshold,
                                   difference_height_norm_threshold=difference_height_norm_threshold,
                                   time_scaling=time_scaling)
 
@@ -343,18 +507,16 @@ class FootstepsExtractor:
         W_H_SF = world_H_base.dot(base_H_support_foot)
         support_foot_pos = W_H_SF[0:3, -1]
         support_foot_ground_pos = [support_foot_pos[0], support_foot_pos[1]]
-        new_footstep["3D_pos"] = list(support_foot_pos)
         new_footstep["2D_pos"] = support_foot_ground_pos
 
         # Compute new footstep 3D and 2D orientation
         support_foot_quat = Quaternion.from_matrix(W_H_SF[0:3, 0:3])
         W_R_SF = Rotation.from_quat(Quaternion.to_xyzw(np.asarray(support_foot_quat)))
         W_RPY_SF = Rotation.as_euler(W_R_SF, 'xyz')
-        new_footstep["3D_orient"] = W_R_SF.as_matrix().tolist()
         new_footstep["2D_orient"] = W_RPY_SF[2]
 
         # Assign new footstep activation time
-        new_footstep["activation_time"] = activation_time * self.time_scaling
+        new_footstep["activation_time"] = activation_time
 
         # Use a temporary flag indicating that the deactivation time has not been computed yet
         new_footstep["deactivation_time"] = -1
@@ -372,7 +534,7 @@ class FootstepsExtractor:
         # Update the deactivation time of the last footstep of each foot (they need to coincide to be processed
         # properly in the trajectory control layer)
         for foot in footsteps.keys():
-            footsteps[foot][-1]["deactivation_time"] = final_deactivation_time * self.time_scaling
+            footsteps[foot][-1]["deactivation_time"] = final_deactivation_time
 
         # Replace temporary deactivation times in the footsteps list (if any)
         updated_footsteps = self.replace_temporary_deactivation_times(footsteps=footsteps)
@@ -408,7 +570,7 @@ class FootstepsExtractor:
                         if other_foot_activation_time > current_activation_time:
 
                             # Update the deactivation time so to have a double support (DS) phase of the nominal duration
-                            current_deactivation_time = other_foot_activation_time + self.nominal_DS_duration * self.time_scaling
+                            current_deactivation_time = other_foot_activation_time + self.nominal_DS_duration
                             footstep["deactivation_time"] = current_deactivation_time
 
                             break
@@ -416,7 +578,7 @@ class FootstepsExtractor:
         return footsteps
 
     def merge_close_footsteps(self, final_deactivation_time: float, footsteps: Dict) -> Dict:
-        """Merge footsteps that are too close each other in order to avoid unintended footsteps on the spot."""
+        """Merge footsteps that are too close each other (in terms of space and time) to avoid unintended footsteps on the spot."""
 
         # Initialize updated footsteps list
         updated_footsteps = {self.feet_frames["left_foot"]: [], self.feet_frames["right_foot"]: []}
@@ -437,9 +599,15 @@ class FootstepsExtractor:
                 next_footstep_position = np.array(footsteps[foot][i + 1]["2D_pos"])
                 difference_position = np.linalg.norm(current_footstep_position - next_footstep_position)
 
-                if difference_position >= self.difference_position_threshold:
+                # Compute the difference in time between consecutive footsteps of the same foot
+                current_footstep_deactivation = np.array(footsteps[foot][i]["deactivation_time"])
+                next_footstep_activation = np.array(footsteps[foot][i + 1]["activation_time"])
+                difference_time = next_footstep_activation - current_footstep_deactivation
 
-                    # Do not update footsteps which are not enough close each other
+                if difference_position >= self.difference_position_threshold or \
+                        (difference_position < self.difference_position_threshold and difference_time >= self.difference_time_threshold):
+
+                    # Do not update footsteps which are not enough close each other (in terms of both time and space)
                     updated_footsteps[foot].append(footsteps[foot][i])
 
                 else:
@@ -526,6 +694,7 @@ class KinematicComputations:
     # Support foot and support vertex related quantities
     local_foot_vertices_pos: List
     feet_frames: Dict
+    feet_links: Dict
     support_foot_prev: str
     support_foot: str
     support_vertex_prev: int
@@ -538,6 +707,7 @@ class KinematicComputations:
     def build(kindyn: kindyncomputations.KinDynComputations,
               local_foot_vertices_pos: List,
               feet_frames: Dict,
+              feet_links: Dict,
               icub: iCub,
               gazebo: scenario.GazeboSimulator,
               initial_support_foot: str,
@@ -560,6 +730,7 @@ class KinematicComputations:
                                      postural_extractor=postural_extractor,
                                      local_foot_vertices_pos=local_foot_vertices_pos,
                                      feet_frames=feet_frames,
+                                     feet_links=feet_links,
                                      support_foot_prev=feet_frames[initial_support_foot],
                                      support_foot=feet_frames[initial_support_foot],
                                      support_vertex_prev=initial_support_vertex,
@@ -630,7 +801,7 @@ class KinematicComputations:
         W_support_foot_pos = W_H_SF[0:3, -1]
 
         # Compute support vertex position wrt the world frame
-        F_support_vertex_pos = self.local_foot_vertices_pos[self.support_vertex]
+        F_support_vertex_pos = self.local_foot_vertices_pos[self.support_vertex % 4]
         F_support_vertex_pos_hom = np.concatenate((F_support_vertex_pos, [1]))
         W_support_vertex_pos_hom = W_H_SF @ F_support_vertex_pos_hom
         W_support_vertex_pos = W_support_vertex_pos_hom[0:3]
@@ -647,11 +818,20 @@ class KinematicComputations:
                                   base_quaternion: List) -> None:
         """Reset the robot configuration."""
 
+        # Retrieve the transformation from the world frame to the base frame
         world_H_base = numpy.FromNumPy.to_idyntree_transform(
             position=np.array(base_position),
             quaternion=np.array(base_quaternion)).asHomogeneousTransform().toNumPy()
 
-        self.kindyn.set_robot_state(s=joint_positions, ds=joint_velocities, world_H_base=world_H_base)
+        # Extract the base velocity by imposing the holonomic constraint on the current support foot
+        jacobian_SF = self.kindyn.get_frame_jacobian(self.feet_links[self.support_foot])
+        jacobian_SF_base = jacobian_SF[:, :6]
+        jacobian_SF_joints = jacobian_SF[:, 6:]
+        base_velocity = - np.linalg.inv(jacobian_SF_base).dot(jacobian_SF_joints.dot(joint_velocities))
+
+        # Set the robot state using the base velocity retrieved by legged odometry
+        self.kindyn.set_robot_state(s=joint_positions, ds=joint_velocities, world_H_base=world_H_base,
+                                    base_velocity=base_velocity)
 
     def reset_visual_robot_configuration(self,
                                          joint_positions: List = None,
@@ -741,7 +921,7 @@ class KinematicComputations:
         # Update the support vertex position
         self.support_vertex_pos = W_vertices_positions[self.support_vertex]
 
-    def update_support_vertex_and_support_foot(self) -> (str, bool, bool):
+    def update_support_vertex_and_support_foot(self, iteration: int) -> (str, bool, bool):
         """Update the support vertex and the support foot. Also, return boolean variables indicating whether the
         deactivation time of the last footstep needs to be updated (update_footstep_deactivation_time) and whether
         a new footstep needs to be added to the footsteps list (update_footsteps_list)."""
@@ -755,9 +935,14 @@ class KinematicComputations:
         # Retrieve the vertices positions in the world frame
         W_vertices_positions = self.compute_W_vertices_pos()
 
-        # Compute the current support vertex
-        vertices_heights = [W_vertex[2] for W_vertex in W_vertices_positions]
-        self.support_vertex = np.argmin(vertices_heights)
+        if iteration == 5: # TODO: tune
+            # After a few iterations, force the current support vertex to switch to the other foot (so that you do not miss the initial contacts)
+            self.support_vertex = (self.support_vertex + 4) % 8
+            print("iteration:", iteration, "support_vertex:", self.support_vertex)
+        else:
+            # Compute the current support vertex
+            vertices_heights = [W_vertex[2] for W_vertex in W_vertices_positions]
+            self.support_vertex = np.argmin(vertices_heights)
 
         # Check whether the deactivation time of the last footstep needs to be updated
         update_footstep_deactivation_time = self.footsteps_extractor.should_update_footstep_deactivation_time(kindyn=self.kindyn)
@@ -1581,6 +1766,7 @@ class TrajectoryGenerator:
               training_path: str,
               local_foot_vertices_pos: List,
               feet_frames: Dict,
+              feet_links: Dict,
               initial_nn_X: List,
               initial_past_trajectory_base_pos: List,
               initial_past_trajectory_facing_dirs: List,
@@ -1612,6 +1798,7 @@ class TrajectoryGenerator:
         kincomputations = KinematicComputations.build(kindyn=kindyn,
                                                       local_foot_vertices_pos=local_foot_vertices_pos,
                                                       feet_frames=feet_frames,
+                                                      feet_links=feet_links,
                                                       icub=icub,
                                                       gazebo=gazebo,
                                                       initial_support_foot=initial_support_foot,
@@ -1735,7 +1922,8 @@ class TrajectoryGenerator:
         time of the last footstep."""
 
         # Update support foot and support vertex while detecting new footsteps and deactivation time updates
-        support_foot, update_deactivation_time, update_footsteps_list = self.kincomputations.update_support_vertex_and_support_foot()
+        support_foot, update_deactivation_time, update_footsteps_list = self.kincomputations.update_support_vertex_and_support_foot(self.iteration)
+
 
         if update_deactivation_time:
 
@@ -1861,7 +2049,8 @@ class TrajectoryGenerator:
     def update_storages_and_save(self, blending_coefficients: List, base_postural: List, joints_pos_postural: List,
                                  joint_vel_postural: List, links_postural: List, com_pos_postural: List,
                                  com_vel_postural: List, centroidal_momentum_postural: List, raw_data: List,
-                                 quad_bezier: List, base_velocities: List, facing_dirs: List, save_every_N_iterations: int) -> None:
+                                 quad_bezier: List, base_velocities: List, facing_dirs: List, save_every_N_iterations: int,
+                                 plot_contacts: bool) -> None:
         """Update the blending coefficients, posturals and joystick input storages and periodically save data."""
 
         # Update the blending coefficients storage
@@ -1885,6 +2074,9 @@ class TrajectoryGenerator:
             updated_footsteps = self.kincomputations.footsteps_extractor.update_footsteps(
                 final_deactivation_time=final_deactivation_time, footsteps=self.storage.footsteps)
             self.storage.replace_footsteps_storage(footsteps=updated_footsteps)
+
+            # Retrieve and optionally plot contacts for the controller
+            contact_phase_list = self.storage.retrieve_contacts(plot_contacts=plot_contacts)
 
             # Save data
             self.storage.save_data_as_json()

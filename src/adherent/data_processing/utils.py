@@ -60,21 +60,30 @@ def define_robot_to_target_base_quat(robot: str) -> List:
 
     return robot_to_target_base_quat
 
-def define_feet_frames(robot: str) -> Dict:
-    """Define the robot-specific feet frames."""
+
+def define_feet_frames_and_links(robot: str) -> Dict:
+    """Define the robot-specific feet frames and links."""
 
     if robot == "iCubV2_5":
-        right_foot = "r_foot"
-        left_foot = "l_foot"
+        right_foot_frame = "r_foot"
+        left_foot_frame = "l_foot"
+        right_foot_link = "r_ankle_2"
+        left_foot_link = "l_ankle_2"
 
     elif robot == "iCubV3":
-        right_foot = "r_foot_rear"
-        left_foot = "l_foot_rear"
+        right_foot_frame = "r_sole"
+        left_foot_frame = "l_sole"
+        right_foot_link = "r_ankle_2"
+        left_foot_link = "l_ankle_2"
 
     else:
-        raise Exception("Feet frames only defined for iCubV2_5 and iCubV3.")
+        raise Exception("Feet frames and links only defined for iCubV2_5 and iCubV3.")
 
-    return {"right_foot": right_foot, "left_foot": left_foot}
+    feet_frames = {"right_foot": right_foot_frame, "left_foot": left_foot_frame}
+    feet_links = {feet_frames["right_foot"]: right_foot_link, feet_frames["left_foot"]: left_foot_link}
+
+    return feet_frames, feet_links
+
 
 def define_foot_vertices(robot: str) -> List:
     """Define the robot-specific positions of the feet vertices in the foot frame."""

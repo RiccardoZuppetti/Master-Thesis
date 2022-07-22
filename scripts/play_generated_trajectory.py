@@ -12,7 +12,7 @@ from scenario import gazebo as scenario
 from gym_ignition.utils.scenario import init_gazebo_sim
 from adherent.data_processing.utils import iCub
 from adherent.trajectory_generation.utils import SphereURDF
-from adherent.data_processing.utils import define_feet_frames
+from adherent.data_processing.utils import define_feet_frames_and_links
 from adherent.trajectory_generation.utils import Shape
 from adherent.trajectory_generation.utils import visualize_generated_motion
 
@@ -42,7 +42,7 @@ plot_momentum = args.plot_momentum
 # ===============================
 
 # Define robot-specific feet frames
-feet_frames = define_feet_frames(robot="iCubV3")
+feet_frames, feet_links = define_feet_frames_and_links(robot="iCubV3")
 
 # Define the paths for the generated postural, footsteps, joystick inputs and blending coefficients
 script_directory = os.path.dirname(os.path.abspath(__file__))
