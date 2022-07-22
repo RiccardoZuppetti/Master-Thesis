@@ -61,7 +61,7 @@ def define_robot_to_target_base_quat(robot: str) -> List:
     return robot_to_target_base_quat
 
 
-def define_feet_frames_and_links(robot: str) -> Dict:
+def define_feet_frames_and_links(robot: str) -> (Dict, Dict):
     """Define the robot-specific feet frames and links."""
 
     if robot == "iCubV2_5":
