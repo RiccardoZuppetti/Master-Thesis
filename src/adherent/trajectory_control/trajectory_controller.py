@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from gym_ignition.rbd.conversions import Rotation
 import bipedal_locomotion_framework.bindings as blf
 from adherent.trajectory_control.utils import rad2deg
-from gym_ignition.rbd.idyntree import inverse_kinematics_nlp
 from adherent.trajectory_control.utils import Integrator
 from adherent.trajectory_control.utils import compute_zmp
 from adherent.trajectory_control.utils import synchronize
@@ -450,14 +449,18 @@ class FootstepsExtractor:
     # Time scaling factor
     time_scaling: int
 
+    # Auxiliary variable
+    feet_frames: Dict
+
     # Footsteps list
     contact_phase_list: blf.contacts.ContactPhaseList = None
 
     @staticmethod
-    def build(footsteps_path: str, footstep_scaling: float, time_scaling: int) -> "FootstepsExtractor":
+    def build(footsteps_path: str, feet_frames: Dict, footstep_scaling: float, time_scaling: int) -> "FootstepsExtractor":
         """Build an instance of FootstepsExtractor."""
 
         return FootstepsExtractor(footsteps_path=footsteps_path,
+                                  feet_frames=feet_frames,
                                   footstep_scaling=footstep_scaling,
                                   time_scaling=time_scaling)
 
@@ -467,19 +470,15 @@ class FootstepsExtractor:
         # Create the map of contact lists
         contact_list_map = dict()
 
-        # Names of the feet frames
-        rfoot_frame = "r_sole"
-        lfoot_frame = "l_sole"
-
         # Create the contact lists
-        contact_list_map[rfoot_frame] = blf.contacts.ContactList()
-        contact_list_map[lfoot_frame] = blf.contacts.ContactList()
+        contact_list_map[self.feet_frames["left_foot"]] = blf.contacts.ContactList()
+        contact_list_map[self.feet_frames["right_foot"]] = blf.contacts.ContactList()
 
         # Retrieve the footsteps from a JSON file
         with open(self.footsteps_path, 'r') as infile:
             contacts = json.load(infile)
-        l_contacts = contacts["l_foot"]
-        r_contacts = contacts["r_foot"]
+        l_contacts = contacts[self.feet_frames["left_foot"]]
+        r_contacts = contacts[self.feet_frames["left_foot"]]
 
         # Storage fot plotting unscaled vs scaled footsteps
         unscaled_left_footsteps_x = []
@@ -522,12 +521,12 @@ class FootstepsExtractor:
         r_deactivation_time = self.time_scaling * (r_contacts[0]["deactivation_time"])
 
         # Add initial left and right contacts to the list
-        assert contact_list_map[lfoot_frame].add_contact(
+        assert contact_list_map[self.feet_frames["left_foot"]].add_contact(
             transform=manif.SE3(position=np.array(ground_l_foot_position),
                                 quaternion=l_foot_quat),
             activation_time=0.0,
             deactivation_time=l_deactivation_time)
-        assert contact_list_map[rfoot_frame].add_contact(
+        assert contact_list_map[self.feet_frames["right_foot"]].add_contact(
             transform=manif.SE3(position=np.array(ground_r_foot_position),
                                 quaternion=r_foot_quat),
             activation_time=0.0,
@@ -593,7 +592,7 @@ class FootstepsExtractor:
             l_deactivation_time = self.time_scaling * (contact["deactivation_time"])
 
             # Add the contact
-            assert contact_list_map[lfoot_frame].add_contact(
+            assert contact_list_map[self.feet_frames["left_foot"]].add_contact(
                 transform=manif.SE3(position=np.array(ground_l_foot_position), quaternion=l_foot_quat),
                 activation_time=l_activation_time,
                 deactivation_time=l_deactivation_time)
@@ -658,7 +657,7 @@ class FootstepsExtractor:
             r_deactivation_time = self.time_scaling * (contact["deactivation_time"])
 
             # Add the contact
-            assert contact_list_map[rfoot_frame].add_contact(
+            assert contact_list_map[self.feet_frames["right_foot"]].add_contact(
                 transform=manif.SE3(position=np.array(ground_r_foot_position), quaternion=r_foot_quat),
                 activation_time=r_activation_time,
                 deactivation_time=r_deactivation_time)
@@ -720,7 +719,7 @@ class PosturalExtractor:
         # Retrieve original joint posturals from a JSON file
         with open(self.posturals_path, 'r') as openfile:
             posturals = json.load(openfile)
-        joint_posturals = posturals["joints"]
+        joint_posturals = posturals["joints_pos"]
 
         # Initialize list for the postural references at the desired frequency
         joint_references = []
@@ -1283,7 +1282,7 @@ class TrajectoryController:
 
     @staticmethod
     def build(robot_urdf: str, footsteps_path: str, posturals_path: str, storage_path: str, time_scaling: int,
-              footstep_scaling: float, use_joint_references: bool, controlled_joints: List, foot_name_to_index: Dict,
+              footstep_scaling: float, feet_frames: Dict, use_joint_references: bool, controlled_joints: List, foot_name_to_index: Dict,
               initial_joint_reference: List, shoulder_offset: float = 0.15) -> "TrajectoryController":
         """Build an instance of TrajectoryController."""
 
@@ -1297,6 +1296,7 @@ class TrajectoryController:
 
         # Footsteps extractor
         footsteps_extractor = FootstepsExtractor.build(footsteps_path=footsteps_path,
+                                                       feet_frames=feet_frames,
                                                        footstep_scaling=footstep_scaling,
                                                        time_scaling=time_scaling)
         footsteps_extractor.retrieve_contacts()

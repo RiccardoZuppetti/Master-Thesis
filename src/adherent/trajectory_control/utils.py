@@ -91,23 +91,34 @@ def world_gravity() -> List:
 def define_foot_name_to_index_mapping(robot: str) -> Dict:
     """Define the robot-specific mapping between feet frame names and indexes."""
 
-    if robot != "iCubV2_5":
-        raise Exception("Mapping between feet frame names and indexes only defined for iCubV2_5.")
+    if robot == "iCubV2_5":
+        foot_name_to_index = {"l_sole": 53, "r_sole": 147}
 
-    foot_name_to_index = {"l_sole": 53, "r_sole": 147}
+    elif robot == "iCubV3":
+        foot_name_to_index = {"l_sole": 29, "r_sole": 35}
+
+    else:
+        raise Exception("Mapping between feet frame names and indexes only defined for iCubV2_5 and iCubV3.")
 
     return foot_name_to_index
 
 def compute_initial_joint_reference(robot: str) -> List:
     """Retrieve the robot-specific initial reference for the joints."""
 
-    if robot != "iCubV2_5":
-        raise Exception("Initial joint reference only defined for iCubV2_5.")
+    if robot == "iCubV2_5":
+        initial_joint_reference = [0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,  # left leg
+                                   0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,  # right leg
+                                   0.1388792845, 0.0, 0.0,  # torso
+                                   -0.0629, 0.4397, 0.1825, 0.5387,  # left arm
+                                   -0.0629, 0.4397, 0.1825, 0.5387]  # right arm
 
-    initial_joint_reference = [0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,  # left leg
-                               0.0899, 0.0233, -0.0046, -0.5656, -0.3738, -0.0236,  # right leg
-                               0.1388792845, 0.0, 0.0,  # torso
-                               -0.0629, 0.4397, 0.1825, 0.5387, # left arm
-                               -0.0629, 0.4397, 0.1825, 0.5387] # right arm
+    elif robot == "iCubV3":
+        initial_joint_reference = [-0.1184, 0.0525, 0.0715, -0.0795, -0.0955, -0.0525,  # left leg
+                                   -0.1184, 0.0525, 0.0715, -0.0795, -0.0955, -0.0525,  # right leg
+                                   0.3381685919, 0.0, 0.0,  # torso
+                                   -0.2715, 0.2073, -0.3505, -0.0345,  # left arm
+                                   -0.2715, 0.2073, -0.3505, -0.0345]  # right arm
+    else:
+        raise Exception("Initial joint reference only defined for iCubV2_5 and iCubV3.")
 
     return initial_joint_reference

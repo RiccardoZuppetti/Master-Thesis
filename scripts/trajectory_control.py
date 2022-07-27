@@ -8,6 +8,7 @@ import numpy as np
 from adherent.trajectory_control import trajectory_controller
 from adherent.trajectory_control.utils import define_foot_name_to_index_mapping
 from adherent.trajectory_control.utils import compute_initial_joint_reference
+from adherent.data_processing.utils import define_feet_frames_and_links
 
 # ==================
 # USER CONFIGURATION
@@ -45,7 +46,7 @@ yarp.Network.init(yarp.YARP_CLOCK_NETWORK)
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
 # Retrieve the robot model
-robot_urdf = "/iit/sources/robotology-superbuild/src/icub-models/iCub/robots/iCubGenova04/model.urdf"
+robot_urdf = "/iit/sources/robotology-superbuild/src/icub-models/iCub/robots/iCubGenova09/model.urdf"
 
 # Define the paths for the generated footsteps and postural
 trajectory_path = os.path.join(script_directory, trajectory_path)
@@ -63,16 +64,20 @@ controlled_joints = ['l_hip_pitch', 'l_hip_roll', 'l_hip_yaw', 'l_knee', 'l_ankl
                      'r_shoulder_pitch', 'r_shoulder_roll', 'r_shoulder_yaw', 'r_elbow'] # right arm
 
 # Define robot-specific feet mapping between feet frame names and indexes
-foot_name_to_index = define_foot_name_to_index_mapping(robot="iCubV2_5")
+foot_name_to_index = define_foot_name_to_index_mapping(robot="iCubV3")
 
 # Define robot-specific initial joint reference
-initial_joint_reference = compute_initial_joint_reference(robot="iCubV2_5")
+initial_joint_reference = compute_initial_joint_reference(robot="iCubV3")
+
+# Define robot-specific feet frames and links
+feet_frames, feet_links = define_feet_frames_and_links(robot="iCubV3")
 
 # Instantiate the trajectory controller
 controller = trajectory_controller.TrajectoryController.build(robot_urdf=robot_urdf,
                                                               footsteps_path=footsteps_path,
                                                               posturals_path=posturals_path,
-                                                              storage_path = storage_path,
+                                                              feet_frames=feet_frames,
+                                                              storage_path=storage_path,
                                                               time_scaling=time_scaling,
                                                               footstep_scaling=footstep_scaling,
                                                               use_joint_references=use_joint_references,
