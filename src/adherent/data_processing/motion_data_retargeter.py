@@ -270,7 +270,7 @@ class IKElement:
         assert self.pose_se3_task.set_variables_handler(variables_handler=pose_se3_var_handler)
 
         # Add pose SE3 task as hard constraint
-        assert self.ik_element.add_task(task=self.pose_se3_task, taskName="pose_se3_task", priority=0)
+        assert self.ik_element.add_task(task=self.pose_se3_task, task_name="pose_se3_task", priority=0)
 
     def configure_orientation_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure orientation SO3 task and add it as soft constraint."""
@@ -293,7 +293,7 @@ class IKElement:
             assert self.temp_dict[key].set_variables_handler(variables_handler=orientation_so3_var_handler)
 
             # Add orientation SO3 task as soft constraint
-            assert self.ik_element.add_task(task=self.temp_dict[key], taskName=f"orientation_so3_task_{key}", priority=1, weight=[10, 10, 10])
+            assert self.ik_element.add_task(task=self.temp_dict[key], task_name=f"orientation_so3_task_{key}", priority=1, weight=[10, 10, 10])
 
     def finalize_ik(self, joints_list: List) -> None:
         """Once all the tasks have been added, finalize the ik."""
