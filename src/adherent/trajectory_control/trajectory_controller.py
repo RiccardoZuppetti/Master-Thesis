@@ -478,7 +478,7 @@ class FootstepsExtractor:
         with open(self.footsteps_path, 'r') as infile:
             contacts = json.load(infile)
         l_contacts = contacts[self.feet_frames["left_foot"]]
-        r_contacts = contacts[self.feet_frames["left_foot"]]
+        r_contacts = contacts[self.feet_frames["right_foot"]]
 
         # Storage fot plotting unscaled vs scaled footsteps
         unscaled_left_footsteps_x = []
