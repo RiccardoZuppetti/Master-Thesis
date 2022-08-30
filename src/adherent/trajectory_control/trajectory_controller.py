@@ -667,19 +667,19 @@ class FootstepsExtractor:
         # ============================
 
         # Plot unscaled vs scaled footsteps
-        plt.figure()
-        plt.plot(unscaled_left_footsteps_x, unscaled_left_footsteps_y, 'r')
-        plt.plot(unscaled_right_footsteps_x, unscaled_right_footsteps_y, 'r')
-        plt.scatter(unscaled_left_footsteps_x, unscaled_left_footsteps_y, c='r')
-        plt.scatter(unscaled_right_footsteps_x, unscaled_right_footsteps_y, c='r')
-        plt.plot(left_footsteps_x, left_footsteps_y, 'b')
-        plt.plot(right_footsteps_x, right_footsteps_y, 'b')
-        plt.scatter(left_footsteps_x, left_footsteps_y, c='b')
-        plt.scatter(right_footsteps_x, right_footsteps_y, c='b')
-        plt.title("Unscaled footsteps (red) VS scaled footsteps (blue)")
-        plt.axis("equal")
-        plt.show(block=False)
-        plt.pause(1.0)
+        # plt.figure()
+        # plt.plot(unscaled_left_footsteps_x, unscaled_left_footsteps_y, 'r')
+        # plt.plot(unscaled_right_footsteps_x, unscaled_right_footsteps_y, 'r')
+        # plt.scatter(unscaled_left_footsteps_x, unscaled_left_footsteps_y, c='r')
+        # plt.scatter(unscaled_right_footsteps_x, unscaled_right_footsteps_y, c='r')
+        # plt.plot(left_footsteps_x, left_footsteps_y, 'b')
+        # plt.plot(right_footsteps_x, right_footsteps_y, 'b')
+        # plt.scatter(left_footsteps_x, left_footsteps_y, c='b')
+        # plt.scatter(right_footsteps_x, right_footsteps_y, c='b')
+        # plt.title("Unscaled footsteps (red) VS scaled footsteps (blue)")
+        # plt.axis("equal")
+        # plt.show(block=False)
+        # plt.pause(1.0)
 
         # Assign contact list
         phase_list = blf.contacts.ContactPhaseList()
@@ -826,12 +826,16 @@ class LeggedOdometry:
         # Advance the legged odometry estimator
         assert self.legged_odom.set_contact_status(self.fixed_foot.name, self.fixed_foot.is_active,
                                                    self.fixed_foot.switch_time, self.fixed_foot.last_update_time)
+
         assert self.legged_odom.advance()
 
         # Update the fixed frame
         self.fixed_foot_index = self.foot_name_to_index[self.fixed_foot.name]
-        self.legged_odom.change_fixed_frame(self.fixed_foot_index, self.fixed_foot.pose.quat(),
-                                            self.fixed_foot.pose.translation())
+        print(type(self.fixed_foot_index))
+        print(type(self.fixed_foot.pose.quat()))
+        print(type(self.fixed_foot.pose.translation()))
+        input()
+        self.legged_odom.change_fixed_frame(self.fixed_foot_index, self.fixed_foot.pose.quat(), self.fixed_foot.pose.translation())
 
         # Retrieve the output of the legged odometry
         out = self.legged_odom.get_output()
@@ -1092,7 +1096,7 @@ class WholeBodyQPControl:
         assert self.com_task.set_variables_handler(variables_handler=com_var_handler)
 
         # Add CoM task as hard constraint
-        assert self.qp_ik.add_task(task=self.com_task, taskName="Com_task", priority=0)
+        assert self.qp_ik.add_task(task=self.com_task, task_name="Com_task", priority=0)
 
     def configure_right_foot_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure right foot SE3 task and add it as hard constraint."""
@@ -1110,7 +1114,7 @@ class WholeBodyQPControl:
         assert self.rf_se3_task.set_variables_handler(variables_handler=rf_se3_var_handler)
 
         # Add right foot SE3 task as hard constraint
-        assert self.qp_ik.add_task(task=self.rf_se3_task, taskName="rf_se3_task", priority=0)
+        assert self.qp_ik.add_task(task=self.rf_se3_task, task_name="rf_se3_task", priority=0)
 
     def configure_left_foot_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure left foot SE3 task and add it as hard constraint."""
@@ -1128,7 +1132,7 @@ class WholeBodyQPControl:
         assert self.lf_se3_task.set_variables_handler(variables_handler=lf_se3_var_handler)
 
         # Add left foot SE3 task as hard constraint
-        assert self.qp_ik.add_task(task=self.lf_se3_task, taskName="lf_se3_task", priority=0)
+        assert self.qp_ik.add_task(task=self.lf_se3_task, task_name="lf_se3_task", priority=0)
 
     def configure_chest_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure chest SO3 task and add it as soft constraint."""
@@ -1145,7 +1149,7 @@ class WholeBodyQPControl:
         assert self.chest_so3_task.set_variables_handler(variables_handler=chest_so3_var_handler)
 
         # Add chest SO3 task as soft constraint, leaving the yaw free
-        assert self.qp_ik.add_task(task=self.chest_so3_task, taskName="chest_so3_task", priority=1, weight=[10, 10, 0])
+        assert self.qp_ik.add_task(task=self.chest_so3_task, task_name="chest_so3_task", priority=1, weight=[10, 10, 0])
 
     def configure_joint_tracking_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure joint tracking task and add it as soft constraint."""
@@ -1163,7 +1167,7 @@ class WholeBodyQPControl:
 
         # Add joint tracking task as soft constraint
         joint_weights = [1] * kindyn.get_nr_of_dofs()
-        assert self.qp_ik.add_task(task=self.joint_tracking_task, taskName="joint_tracking_task", priority=1, weight=joint_weights)
+        assert self.qp_ik.add_task(task=self.joint_tracking_task, task_name="joint_tracking_task", priority=1, weight=joint_weights)
 
     def finalize_ik(self, joints_list: List) -> None:
         """Once all the tasks have been added, finalize the ik."""
@@ -1258,8 +1262,10 @@ class TrajectoryController:
     robot_control: blf.robot_interface.YarpRobotControl = None
 
     # Sensing
-    cartesian_left_wrench: blf.robot_interface.PolyDriverDescriptor = None
-    cartesian_right_wrench: blf.robot_interface.PolyDriverDescriptor = None
+    cartesian_left_front_wrench: blf.robot_interface.PolyDriverDescriptor = None
+    cartesian_left_rear_wrench: blf.robot_interface.PolyDriverDescriptor = None
+    cartesian_right_front_wrench: blf.robot_interface.PolyDriverDescriptor = None
+    cartesian_right_rear_wrench: blf.robot_interface.PolyDriverDescriptor = None
     sensor_bridge: blf.robot_interface.YarpSensorBridge = None
 
     # Kindyn descriptors
@@ -1271,8 +1277,10 @@ class TrajectoryController:
     joints_velocities_des: np.array = field(default_factory=lambda: np.array([]))
 
     # Measured quantities
-    left_wrench: np.array = field(default_factory=lambda: np.array([]))
-    right_wrench: np.array = field(default_factory=lambda: np.array([]))
+    left_front_wrench: np.array = field(default_factory=lambda: np.array([]))
+    left_rear_wrench: np.array = field(default_factory=lambda: np.array([]))
+    right_front_wrench: np.array = field(default_factory=lambda: np.array([]))
+    right_rear_wrench: np.array = field(default_factory=lambda: np.array([]))
     joints_values: np.array = field(default_factory=lambda: np.array([]))
     joints_velocities: np.array = field(default_factory=lambda: np.array([]))
     zmp_pos_meas: np.array = field(default_factory=lambda: np.array([]))
@@ -1376,34 +1384,58 @@ class TrajectoryController:
         else:
             handler.set_parameter_float("position_direct_max_admissible_error", 0.1)
 
-        # Configuration of the device to read left wrench
-        l_wrench_handler = blf.parameters_handler.StdParametersHandler()
-        l_wrench_handler.set_parameter_string("description", "/test_local_l_foot_wrench")  # name of the device: it must be /<local_prefix><local_port_name_postfix>
-        l_wrench_handler.set_parameter_string("remote_port_name", "/wholeBodyDynamics/left_foot/cartesianEndEffectorWrench:o")  # name of the yarp port to read
-        l_wrench_handler.set_parameter_string("local_prefix", "test_local")  # free choice, but it must be consistent with 'description'
-        l_wrench_handler.set_parameter_string("local_port_name_postfix", "_l_foot_wrench")  # free choice, but it must be consistent with 'description'
-        l_wrench_handler.set_parameter_vector_string("cartesian_wrenches_list", ["/test_local_l_foot_wrench", "/test_local_r_foot_wrench"])  # list of the device names: they must be consistent with 'description'
+        # Configuration of the device to read left front wrench
+        l_front_wrench_handler = blf.parameters_handler.StdParametersHandler()
+        l_front_wrench_handler.set_parameter_string("description", "/test_local_l_foot_front_wrench")  # name of the device: it must be /<local_prefix><local_port_name_postfix>
+        l_front_wrench_handler.set_parameter_string("remote_port_name", "/wholeBodyDynamics/left_foot_front/cartesianEndEffectorWrench:o")  # name of the yarp port to read
+        l_front_wrench_handler.set_parameter_string("local_prefix", "test_local")  # free choice, but it must be consistent with 'description'
+        l_front_wrench_handler.set_parameter_string("local_port_name_postfix", "_l_foot_front_wrench")  # free choice, but it must be consistent with 'description'
+        l_front_wrench_handler.set_parameter_vector_string("cartesian_wrenches_list", ["/test_local_l_foot_front_wrench", "/test_local_l_foot_rear_wrench", "/test_local_r_foot_front_wrench", "/test_local_r_foot_rear_wrench"])  # list of the device names: they must be consistent with 'description'
 
-        # Configuration of the device to read right wrench
-        r_wrench_handler = blf.parameters_handler.StdParametersHandler()
-        r_wrench_handler.set_parameter_string("description", "/test_local_r_foot_wrench")  # name of the device: it must be /<local_prefix><local_port_name_postfix>
-        r_wrench_handler.set_parameter_string("remote_port_name", "/wholeBodyDynamics/right_foot/cartesianEndEffectorWrench:o")  # name of the yarp port to read
-        r_wrench_handler.set_parameter_string("local_prefix", "test_local")  # free choice, but it must be consistent with 'description'
-        r_wrench_handler.set_parameter_string("local_port_name_postfix", "_r_foot_wrench")  # free choice, but it must be consistent with 'description'
-        r_wrench_handler.set_parameter_vector_string("cartesian_wrenches_list", ["/test_local_l_foot_wrench", "/test_local_r_foot_wrench"])  # list of the device names: they must be consistent with 'description'
+        # Configuration of the device to read left rear wrench
+        l_rear_wrench_handler = blf.parameters_handler.StdParametersHandler()
+        l_rear_wrench_handler.set_parameter_string("description", "/test_local_l_foot_rear_wrench")  # name of the device: it must be /<local_prefix><local_port_name_postfix>
+        l_rear_wrench_handler.set_parameter_string("remote_port_name", "/wholeBodyDynamics/left_foot_rear/cartesianEndEffectorWrench:o")  # name of the yarp port to read
+        l_rear_wrench_handler.set_parameter_string("local_prefix", "test_local")  # free choice, but it must be consistent with 'description'
+        l_rear_wrench_handler.set_parameter_string("local_port_name_postfix", "_l_foot_rear_wrench")  # free choice, but it must be consistent with 'description'
+        l_rear_wrench_handler.set_parameter_vector_string("cartesian_wrenches_list", ["/test_local_l_foot_front_wrench", "/test_local_l_foot_rear_wrench", "/test_local_r_foot_front_wrench", "/test_local_r_foot_rear_wrench"])  # list of the device names: they must be consistent with 'description'
+
+        # Configuration of the device to read right front wrench
+        r_front_wrench_handler = blf.parameters_handler.StdParametersHandler()
+        r_front_wrench_handler.set_parameter_string("description", "/test_local_r_foot_front_wrench")  # name of the device: it must be /<local_prefix><local_port_name_postfix>
+        r_front_wrench_handler.set_parameter_string("remote_port_name", "/wholeBodyDynamics/right_foot_front/cartesianEndEffectorWrench:o")  # name of the yarp port to read
+        r_front_wrench_handler.set_parameter_string("local_prefix", "test_local")  # free choice, but it must be consistent with 'description'
+        r_front_wrench_handler.set_parameter_string("local_port_name_postfix", "_r_foot_front_wrench")  # free choice, but it must be consistent with 'description'
+        r_front_wrench_handler.set_parameter_vector_string("cartesian_wrenches_list", ["/test_local_l_foot_front_wrench", "/test_local_l_foot_rear_wrench", "/test_local_r_foot_front_wrench", "/test_local_r_foot_rear_wrench"])  # list of the device names: they must be consistent with 'description'
+
+        # Configuration of the device to read right rear wrench
+        r_rear_wrench_handler = blf.parameters_handler.StdParametersHandler()
+        r_rear_wrench_handler.set_parameter_string("description", "/test_local_r_foot_rear_wrench")  # name of the device: it must be /<local_prefix><local_port_name_postfix>
+        r_rear_wrench_handler.set_parameter_string("remote_port_name", "/wholeBodyDynamics/right_foot_rear/cartesianEndEffectorWrench:o")  # name of the yarp port to read
+        r_rear_wrench_handler.set_parameter_string("local_prefix", "test_local")  # free choice, but it must be consistent with 'description'
+        r_rear_wrench_handler.set_parameter_string("local_port_name_postfix", "_r_foot_rear_wrench")  # free choice, but it must be consistent with 'description'
+        r_rear_wrench_handler.set_parameter_vector_string("cartesian_wrenches_list", ["/test_local_l_foot_front_wrench", "/test_local_l_foot_rear_wrench", "/test_local_r_foot_front_wrench", "/test_local_r_foot_rear_wrench"])  # list of the device names: they must be consistent with 'description'
 
         # Configuration for sensing
         handler.set_parameter_bool("check_for_nan", False)
         handler.set_parameter_bool("stream_joint_states", True)
         handler.set_parameter_bool("stream_cartesian_wrenches", True)
-        handler.set_group(name="CartesianWrenches", new_group=l_wrench_handler)
+        handler.set_group(name="CartesianWrenches", new_group=l_front_wrench_handler)
 
-        # Create the sensor device for the left wrench
-        self.cartesian_left_wrench = blf.robot_interface.construct_generic_sensor_client(l_wrench_handler)
+        # Create the sensor device for the left front wrench
+        self.cartesian_left_front_wrench = blf.robot_interface.construct_generic_sensor_client(l_front_wrench_handler)
         time.sleep(1)
 
-        # Create the sensor device for the right wrench
-        self.cartesian_right_wrench = blf.robot_interface.construct_generic_sensor_client(r_wrench_handler)
+        # Create the sensor device for the left rear wrench
+        self.cartesian_left_rear_wrench = blf.robot_interface.construct_generic_sensor_client(l_rear_wrench_handler)
+        time.sleep(1)
+
+        # Create the sensor device for the right front wrench
+        self.cartesian_right_front_wrench = blf.robot_interface.construct_generic_sensor_client(r_front_wrench_handler)
+        time.sleep(1)
+
+        # Create the sensor device for the right rear wrench
+        self.cartesian_right_rear_wrench = blf.robot_interface.construct_generic_sensor_client(r_rear_wrench_handler)
         time.sleep(1)
 
         # Create the control board
@@ -1418,7 +1450,7 @@ class TrajectoryController:
         # Create the sensor bridge
         self.sensor_bridge = blf.robot_interface.YarpSensorBridge()
         self.sensor_bridge.initialize(handler)
-        self.sensor_bridge.set_drivers_list([self.control_board, self.cartesian_left_wrench, self.cartesian_right_wrench])
+        self.sensor_bridge.set_drivers_list([self.control_board, self.cartesian_left_front_wrench, self.cartesian_left_rear_wrench, self.cartesian_right_front_wrench, self.cartesian_right_rear_wrench])
 
     def set_initial_joint_reference(self) -> None:
         """Set the initial joint reference."""
@@ -1476,6 +1508,7 @@ class TrajectoryController:
 
         # Retrieve data from the simulator
         self.sensor_bridge.advance()
+
         _, self.joints_values, _ = self.sensor_bridge.get_joint_positions()
         _, self.joints_velocities, _ = self.sensor_bridge.get_joint_velocities()
 
@@ -1535,8 +1568,16 @@ class TrajectoryController:
         _, self.joints_velocities, _ = self.sensor_bridge.get_joint_velocities()
 
         # Measure local contact wrenches in the feet reference frames
-        _, self.left_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_wrench")
-        _, self.right_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_wrench")
+        l_f_wrench, self.left_front_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_front_wrench")
+        l_r_wrench, self.left_rear_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_rear_wrench")
+        r_f_wrench, self.right_front_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_front_wrench")
+        r_r_wrench, self.right_rear_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_rear_wrench")
+
+        print(l_f_wrench)
+        print(l_r_wrench)
+        print(r_f_wrench)
+        print(r_r_wrench)
+        input()
 
     def update_legged_odom(self) -> None:
         """Update legged odometry estimator and kindyn descriptors."""
@@ -1562,7 +1603,7 @@ class TrajectoryController:
         """Retrieve the desired CoM position."""
 
         # Compute measured ZMP from the contact wrenches
-        self.zmp_pos_meas = compute_zmp(self.kindyn_meas_desc.kindyn, self.left_wrench, self.right_wrench)
+        self.zmp_pos_meas = compute_zmp(self.kindyn_meas_desc.kindyn, self.left_front_wrench, self.left_rear_wrench, self.right_front_wrench, self.right_rear_wrench)
 
         # Retrieve measured CoM position and velocity
         W_pos_CoM = self.kindyn_meas_desc.kindyn.get_center_of_mass_position()
