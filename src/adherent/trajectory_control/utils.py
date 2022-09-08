@@ -34,34 +34,51 @@ class Integrator:
 
         return self.joints_position
 
+
 def compute_zmp(kindyn: blf.floating_base_estimators.KinDynComputations,
-                left_wrench: np.array, right_wrench: np.array) -> np.array:
+                left_front_wrench: np.array, left_rear_wrench: np.array, right_front_wrench: np.array, right_rear_wrench: np.array) -> np.array:
     """Auxiliary function to retrieve the zero-moment point from the feet wrenches."""
 
-    # Compute local zmps (one per foot) from the foot wrenches
-    LF_r_zmp_L = [-left_wrench[4]/left_wrench[2], left_wrench[3]/left_wrench[2]]
-    RF_r_zmp_R = [-right_wrench[4]/right_wrench[2], right_wrench[3]/right_wrench[2]]
+    # Compute local zmps (two per foot: front & rear) from the foot wrenches
+    LF_r_zmp_L_front = [-left_front_wrench[4]/left_front_wrench[2], left_front_wrench[3]/left_front_wrench[2]]
+    LF_r_zmp_L_rear = [-left_rear_wrench[4]/left_rear_wrench[2], left_rear_wrench[3]/left_rear_wrench[2]]
+    RF_r_zmp_R_front = [-right_front_wrench[4]/right_front_wrench[2], right_front_wrench[3]/right_front_wrench[2]]
+    RF_r_zmp_R_rear = [-right_rear_wrench[4]/right_rear_wrench[2], right_rear_wrench[3]/right_rear_wrench[2]]
 
     # Express the local zmps in homogeneous coordinates
-    LF_r_zmp_L_homogenous = np.array([LF_r_zmp_L[0],LF_r_zmp_L[1],0,1])
-    RF_r_zmp_R_homogenous = np.array([RF_r_zmp_R[0],RF_r_zmp_R[1],0,1])
+    LF_r_zmp_L_front_homogenous = np.array([LF_r_zmp_L_front[0],LF_r_zmp_L_front[1],0,1])
+    LF_r_zmp_L_rear_homogenous = np.array([LF_r_zmp_L_rear[0],LF_r_zmp_L_rear[1],0,1])
+    RF_r_zmp_R_front_homogenous = np.array([RF_r_zmp_R_front[0],RF_r_zmp_R_front[1],0,1])
+    RF_r_zmp_R_rear_homogenous = np.array([RF_r_zmp_R_rear[0],RF_r_zmp_R_rear[1],0,1])
 
     # Retrieve the global transform of the feet frames
-    W_H_LF = kindyn.get_world_transform("l_sole")
-    W_H_RF = kindyn.get_world_transform("r_sole")
+    W_H_LF_front = kindyn.get_world_transform("l_sole")
+    W_H_LF_rear = kindyn.get_world_transform("l_sole")
+    W_H_RF_front = kindyn.get_world_transform("r_sole")
+    W_H_RF_rear = kindyn.get_world_transform("r_sole")
 
-    # Express the local zmps (one per foot) in a common reference frame (i.e. the world frame)
-    W_r_zmp_L_hom = W_H_LF @ LF_r_zmp_L_homogenous
-    W_r_zmp_L = W_r_zmp_L_hom[0:2]
-    W_r_zmp_R_hom = W_H_RF @ RF_r_zmp_R_homogenous
-    W_r_zmp_R = W_r_zmp_R_hom[0:2]
+    # Express the local zmps (two per foot) in a common reference frame (i.e. the world frame)
+    W_r_zmp_L_hom_front = W_H_LF_front @ LF_r_zmp_L_front_homogenous
+    W_r_zmp_L_front = W_r_zmp_L_hom_front[0:2]
 
-    # Compute the global zmp as a weighted mean of the local zmps (one per foot)
+    W_r_zmp_L_hom_rear = W_H_LF_rear @ LF_r_zmp_L_rear_homogenous
+    W_r_zmp_L_rear = W_r_zmp_L_hom_rear[0:2]
+
+    W_r_zmp_R_hom_front = W_H_RF_front @ RF_r_zmp_R_front_homogenous
+    W_r_zmp_R_front = W_r_zmp_R_hom_front[0:2]
+
+    W_r_zmp_R_hom_rear = W_H_RF_rear @ RF_r_zmp_R_rear_homogenous
+    W_r_zmp_R_rear = W_r_zmp_R_hom_rear[0:2]
+
+    # Compute the global zmp as a weighted mean of the local zmps (two per foot)
     # expressed in a common reference frame (i.e. the world frame)
-    W_r_zmp_global = W_r_zmp_L * (left_wrench[2]/(left_wrench[2]+right_wrench[2])) + \
-                     W_r_zmp_R * (right_wrench[2]/(left_wrench[2]+right_wrench[2]))
+    W_r_zmp_global = W_r_zmp_L_front * (left_front_wrench[2]/(left_front_wrench[2]+right_front_wrench[2])) + \
+                     W_r_zmp_L_rear * (left_rear_wrench[2]/(left_rear_wrench[2]+right_rear_wrench[2])) + \
+                     W_r_zmp_R_front * (right_front_wrench[2]/(left_front_wrench[2]+right_front_wrench[2])) + \
+                     W_r_zmp_R_rear * (right_rear_wrench[2]/(left_rear_wrench[2]+right_rear_wrench[2]))
 
     return W_r_zmp_global
+
 
 def synchronize(curr_dt: float, dt: float) -> float:
     """Auxiliary function for synchronization."""

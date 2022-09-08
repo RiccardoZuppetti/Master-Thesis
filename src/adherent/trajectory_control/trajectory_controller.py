@@ -5,6 +5,7 @@ import os
 import time
 import yarp
 import json
+import pytest
 import numpy as np
 import manifpy as manif
 from datetime import datetime
@@ -831,10 +832,6 @@ class LeggedOdometry:
 
         # Update the fixed frame
         self.fixed_foot_index = self.foot_name_to_index[self.fixed_foot.name]
-        print(type(self.fixed_foot_index))
-        print(type(self.fixed_foot.pose.quat()))
-        print(type(self.fixed_foot.pose.translation()))
-        input()
         self.legged_odom.change_fixed_frame(self.fixed_foot_index, self.fixed_foot.pose.quat(), self.fixed_foot.pose.translation())
 
         # Retrieve the output of the legged odometry
@@ -972,10 +969,10 @@ class TrajectoryOptimization:
         handler.set_parameter_int(name="number_of_foot_corners", value=4)
 
         # Foot corners (seen by the planner)
-        handler.set_parameter_vector_float(name="foot_corner_0", value=[0.05, 0.005, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_1", value=[0.05, -0.005, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_2", value=[-0.00, -0.005, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_3", value=[-0.00, 0.005, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_0", value=[0.10, 0.025, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_1", value=[0.10, -0.025, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_2", value=[-0.00, -0.025, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_3", value=[-0.00, 0.025, 0.0])
 
         # Set the weights of the cost function
         handler.set_parameter_float(name="omega_dot_weight", value=10.0)
@@ -1065,7 +1062,6 @@ class WholeBodyQPControl:
     com_task: blf.ik.CoMTask = field(default_factory=lambda: blf.ik.CoMTask())
     rf_se3_task: blf.ik.SE3Task = field(default_factory=lambda: blf.ik.SE3Task())
     lf_se3_task: blf.ik.SE3Task = field(default_factory=lambda: blf.ik.SE3Task())
-    chest_so3_task: blf.ik.SO3Task = field(default_factory=lambda: blf.ik.SO3Task())
     joint_tracking_task: blf.ik.JointTrackingTask = field(default_factory=lambda: blf.ik.JointTrackingTask())
 
     @staticmethod
@@ -1134,23 +1130,6 @@ class WholeBodyQPControl:
         # Add left foot SE3 task as hard constraint
         assert self.qp_ik.add_task(task=self.lf_se3_task, task_name="lf_se3_task", priority=0)
 
-    def configure_chest_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
-        """Configure chest SO3 task and add it as soft constraint."""
-
-        # Configure chest SO3 task
-        chest_so3_param_handler = blf.parameters_handler.StdParametersHandler()
-        chest_so3_param_handler.set_parameter_string(name="robot_velocity_variable_name", value="robotVelocity")
-        chest_so3_param_handler.set_parameter_string(name="frame_name", value="chest")
-        chest_so3_param_handler.set_parameter_float(name="kp_angular", value=10.0)
-        assert self.chest_so3_task.set_kin_dyn(kindyn)
-        assert self.chest_so3_task.initialize(param_handler=chest_so3_param_handler)
-        chest_so3_var_handler = blf.system.VariablesHandler()
-        assert chest_so3_var_handler.add_variable("robotVelocity", len(joints_list) + 6) is True
-        assert self.chest_so3_task.set_variables_handler(variables_handler=chest_so3_var_handler)
-
-        # Add chest SO3 task as soft constraint, leaving the yaw free
-        assert self.qp_ik.add_task(task=self.chest_so3_task, task_name="chest_so3_task", priority=1, weight=[10, 10, 0])
-
     def configure_joint_tracking_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure joint tracking task and add it as soft constraint."""
 
@@ -1181,13 +1160,6 @@ class WholeBodyQPControl:
         """Set set point for the joint tracking task."""
 
         assert self.joint_tracking_task.set_set_point(joint_position=joint_reference)
-
-    def set_chest_set_point(self, chest_quat_reference: List) -> None:
-        """Set set point for the chest SO3 task."""
-
-        I_R_F = manif.SO3(quaternion=chest_quat_reference)
-        angularVelocity = manif.SO3Tangent([0.0] * 3)
-        assert self.chest_so3_task.set_set_point(I_R_F=I_R_F, angular_velocity=angularVelocity)
 
     def set_right_foot_set_point(self, right_foot_state: blf.planners.SwingFootPlannerState) -> None:
         """Set set point for the right foot SE3 task."""
@@ -1256,6 +1228,9 @@ class TrajectoryController:
 
     # Auxiliary variable for synchronization
     curr_dt: float = 0
+
+    # Test
+    first_iteration: int = 0
 
     # Robot control
     control_board: blf.robot_interface.PolyDriverDescriptor = None
@@ -1490,9 +1465,6 @@ class TrajectoryController:
         # Configure left foot task
         self.whole_body_qp_control.configure_left_foot_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
 
-        # Configure chest task
-        self.whole_body_qp_control.configure_chest_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
-
         # Configure joint tracking task
         self.whole_body_qp_control.configure_joint_tracking_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
 
@@ -1501,7 +1473,6 @@ class TrajectoryController:
 
         # Set fixed set points for the joint tracking task (initial pose) and the chest task (straight chest)
         self.whole_body_qp_control.set_joint_tracking_set_point(joint_reference=self.initial_joint_reference)
-        self.whole_body_qp_control.set_chest_set_point(chest_quat_reference=[0.5, 0.5, 0.5, 0.5])
 
     def configure_legged_odom(self) -> None:
         """Setup the legged odometry estimator."""
@@ -1528,14 +1499,17 @@ class TrajectoryController:
     def configure_planners(self) -> None:
         """Setup DCM and swing foot planners."""
 
+        initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
+        initial_com[0] = 0
         self.trajectory_optimization.configure(contact_phase_list=self.footsteps_extractor.contact_phase_list,
-                                               initial_com=self.kindyn_des_desc.kindyn.get_center_of_mass_position(),
+                                               initial_com=initial_com,
                                                dt=self.dt)
 
     def configure_controllers(self, k_zmp: float, k_dcm: float, k_com: float) -> None:
         """Setup the instantaneous DCM controller and the ZMP-CoM controller."""
 
         initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
+        initial_com[0] = 0
         self.simplified_model_control = SimplifiedModelControl.build(com_initial_position=initial_com,
                                                                      k_zmp=k_zmp, k_com=k_com, k_dcm=k_dcm)
 
@@ -1568,16 +1542,10 @@ class TrajectoryController:
         _, self.joints_velocities, _ = self.sensor_bridge.get_joint_velocities()
 
         # Measure local contact wrenches in the feet reference frames
-        l_f_wrench, self.left_front_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_front_wrench")
-        l_r_wrench, self.left_rear_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_rear_wrench")
-        r_f_wrench, self.right_front_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_front_wrench")
-        r_r_wrench, self.right_rear_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_rear_wrench")
-
-        print(l_f_wrench)
-        print(l_r_wrench)
-        print(r_f_wrench)
-        print(r_r_wrench)
-        input()
+        _, self.left_front_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_front_wrench")
+        _, self.left_rear_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_l_foot_rear_wrench")
+        _, self.right_front_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_front_wrench")
+        _, self.right_rear_wrench, _ = self.sensor_bridge.get_cartesian_wrench(wrench_name="/test_local_r_foot_rear_wrench")
 
     def update_legged_odom(self) -> None:
         """Update legged odometry estimator and kindyn descriptors."""
@@ -1716,13 +1684,13 @@ class TrajectoryController:
         self.storage.update_right_foot_storage(right_foot_des=self.trajectory_optimization.right_foot_state.transform.translation(),
                                                right_foot_meas_transform=self.kindyn_meas_desc.kindyn.get_world_transform("r_sole"),
                                                right_foot_des_transform=self.kindyn_des_desc.kindyn.get_world_transform("r_sole"),
-                                               right_wrench=self.right_wrench)
+                                               right_wrench=self.right_rear_wrench)
 
         # Update left foot storage
         self.storage.update_left_foot_storage(left_foot_des=self.trajectory_optimization.left_foot_state.transform.translation(),
                                               left_foot_meas_transform=self.kindyn_meas_desc.kindyn.get_world_transform("l_sole"),
                                               left_foot_des_transform=self.kindyn_des_desc.kindyn.get_world_transform("l_sole"),
-                                              left_wrench=self.left_wrench)
+                                              left_wrench=self.left_rear_wrench)
 
     # =======
     # GETTERS
