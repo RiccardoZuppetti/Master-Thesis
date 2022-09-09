@@ -19,6 +19,7 @@ from adherent.trajectory_control.utils import Integrator
 from adherent.trajectory_control.utils import compute_zmp
 from adherent.trajectory_control.utils import synchronize
 from adherent.trajectory_control.utils import world_gravity
+import idyntree.bindings as idt
 
 
 @dataclass
@@ -707,7 +708,7 @@ class PosturalExtractor:
     @staticmethod
     def build(posturals_path: str,
               time_scaling: int,
-              shoulder_offset: float = 0.15) -> "PosturalExtractor":
+              shoulder_offset: float = 0.0) -> "PosturalExtractor":
         """Build an instance of PosturalExtractor."""
 
         return PosturalExtractor(posturals_path=posturals_path,
@@ -946,7 +947,7 @@ class TrajectoryOptimization:
 
         parameters_handler = blf.parameters_handler.StdParametersHandler()
         parameters_handler.set_parameter_float("sampling_time", dt)
-        parameters_handler.set_parameter_float("step_height", 0.025)
+        parameters_handler.set_parameter_float("step_height", 0.02)
         parameters_handler.set_parameter_float("foot_apex_time", 0.4)
         parameters_handler.set_parameter_float("foot_landing_velocity", 0.0)
         parameters_handler.set_parameter_float("foot_landing_acceleration", 0)
@@ -969,10 +970,10 @@ class TrajectoryOptimization:
         handler.set_parameter_int(name="number_of_foot_corners", value=4)
 
         # Foot corners (seen by the planner)
-        handler.set_parameter_vector_float(name="foot_corner_0", value=[0.10, 0.025, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_1", value=[0.10, -0.025, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_2", value=[-0.00, -0.025, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_3", value=[-0.00, 0.025, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_0", value=[0.04, 0.03, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_1", value=[0.04, -0.03, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_2", value=[-0.04, -0.03, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_3", value=[-0.04, 0.03, 0.0])
 
         # Set the weights of the cost function
         handler.set_parameter_float(name="omega_dot_weight", value=10.0)
@@ -1062,6 +1063,7 @@ class WholeBodyQPControl:
     com_task: blf.ik.CoMTask = field(default_factory=lambda: blf.ik.CoMTask())
     rf_se3_task: blf.ik.SE3Task = field(default_factory=lambda: blf.ik.SE3Task())
     lf_se3_task: blf.ik.SE3Task = field(default_factory=lambda: blf.ik.SE3Task())
+    chest_so3_task: blf.ik.SO3Task = field(default_factory=lambda: blf.ik.SO3Task())
     joint_tracking_task: blf.ik.JointTrackingTask = field(default_factory=lambda: blf.ik.JointTrackingTask())
 
     @staticmethod
@@ -1130,6 +1132,23 @@ class WholeBodyQPControl:
         # Add left foot SE3 task as hard constraint
         assert self.qp_ik.add_task(task=self.lf_se3_task, task_name="lf_se3_task", priority=0)
 
+    def configure_chest_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
+        """Configure chest SO3 task and add it as soft constraint."""
+
+        # Configure chest SO3 task
+        chest_so3_param_handler = blf.parameters_handler.StdParametersHandler()
+        chest_so3_param_handler.set_parameter_string(name="robot_velocity_variable_name", value="robotVelocity")
+        chest_so3_param_handler.set_parameter_string(name="frame_name", value="chest")
+        chest_so3_param_handler.set_parameter_float(name="kp_angular", value=10.0)
+        assert self.chest_so3_task.set_kin_dyn(kindyn)
+        assert self.chest_so3_task.initialize(param_handler=chest_so3_param_handler)
+        chest_so3_var_handler = blf.system.VariablesHandler()
+        assert chest_so3_var_handler.add_variable("robotVelocity", len(joints_list) + 6) is True
+        assert self.chest_so3_task.set_variables_handler(variables_handler=chest_so3_var_handler)
+
+        # Add chest SO3 task as soft constraint, leaving the yaw free
+        assert self.qp_ik.add_task(task=self.chest_so3_task, task_name="chest_so3_task", priority=1, weight=[10, 10, 0])
+
     def configure_joint_tracking_task(self, kindyn: blf.floating_base_estimators.KinDynComputations, joints_list: List) -> None:
         """Configure joint tracking task and add it as soft constraint."""
 
@@ -1160,6 +1179,13 @@ class WholeBodyQPControl:
         """Set set point for the joint tracking task."""
 
         assert self.joint_tracking_task.set_set_point(joint_position=joint_reference)
+
+    def set_chest_set_point(self, chest_quat_reference: List) -> None:
+        """Set set point for the chest SO3 task."""
+
+        I_R_F = manif.SO3(quaternion=chest_quat_reference)
+        angularVelocity = manif.SO3Tangent([0.0] * 3)
+        assert self.chest_so3_task.set_set_point(I_R_F=I_R_F, angular_velocity=angularVelocity)
 
     def set_right_foot_set_point(self, right_foot_state: blf.planners.SwingFootPlannerState) -> None:
         """Set set point for the right foot SE3 task."""
@@ -1269,6 +1295,13 @@ class TrajectoryController:
               initial_joint_reference: List, shoulder_offset: float = 0.15) -> "TrajectoryController":
         """Build an instance of TrajectoryController."""
 
+        mdl_loader = idt.ModelLoader()
+        mdl_loader.loadReducedModelFromFile(robot_urdf, controlled_joints)
+        model = mdl_loader.model()
+        print("***************")
+        print("l_sole", model.getFrameIndex(frameName="l_sole"))
+        print("r_sole", model.getFrameIndex(frameName="r_sole"))
+
         # Control loop rate (100 Hz)
         dt = 0.01
 
@@ -1357,7 +1390,7 @@ class TrajectoryController:
         if self.use_joint_references:
             handler.set_parameter_float("position_direct_max_admissible_error", 0.25)
         else:
-            handler.set_parameter_float("position_direct_max_admissible_error", 0.1)
+            handler.set_parameter_float("position_direct_max_admissible_error", 0.15)
 
         # Configuration of the device to read left front wrench
         l_front_wrench_handler = blf.parameters_handler.StdParametersHandler()
@@ -1465,6 +1498,9 @@ class TrajectoryController:
         # Configure left foot task
         self.whole_body_qp_control.configure_left_foot_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
 
+        # Configure chest task
+        self.whole_body_qp_control.configure_chest_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
+
         # Configure joint tracking task
         self.whole_body_qp_control.configure_joint_tracking_task(kindyn=self.kindyn_des_desc.kindyn, joints_list=self.joints_list)
 
@@ -1473,6 +1509,7 @@ class TrajectoryController:
 
         # Set fixed set points for the joint tracking task (initial pose) and the chest task (straight chest)
         self.whole_body_qp_control.set_joint_tracking_set_point(joint_reference=self.initial_joint_reference)
+        self.whole_body_qp_control.set_chest_set_point(chest_quat_reference=[0, 0, 0, 1.0])
 
     def configure_legged_odom(self) -> None:
         """Setup the legged odometry estimator."""
@@ -1500,7 +1537,7 @@ class TrajectoryController:
         """Setup DCM and swing foot planners."""
 
         initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
-        initial_com[0] = 0
+        initial_com = np.array([0, 0, initial_com[2]])
         self.trajectory_optimization.configure(contact_phase_list=self.footsteps_extractor.contact_phase_list,
                                                initial_com=initial_com,
                                                dt=self.dt)
@@ -1509,7 +1546,7 @@ class TrajectoryController:
         """Setup the instantaneous DCM controller and the ZMP-CoM controller."""
 
         initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
-        initial_com[0] = 0
+        initial_com = np.array([0, 0, initial_com[2]])
         self.simplified_model_control = SimplifiedModelControl.build(com_initial_position=initial_com,
                                                                      k_zmp=k_zmp, k_com=k_com, k_dcm=k_dcm)
 

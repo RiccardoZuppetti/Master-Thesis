@@ -112,7 +112,7 @@ def define_foot_name_to_index_mapping(robot: str) -> Dict:
         foot_name_to_index = {"l_sole": 53, "r_sole": 147}
 
     elif robot == "iCubV3":
-        foot_name_to_index = {"l_sole": 29, "r_sole": 35}
+        foot_name_to_index = {"l_sole": 30, "r_sole": 37}
 
     else:
         raise Exception("Mapping between feet frame names and indexes only defined for iCubV2_5 and iCubV3.")
