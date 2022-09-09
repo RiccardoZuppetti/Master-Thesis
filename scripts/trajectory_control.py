@@ -21,7 +21,7 @@ parser.add_argument("--trajectory_path", help="Path where the generated trajecto
 parser.add_argument("--time_scaling", help="Time scaling to be applied to the generated trajectory. Keep it integer.",
                     type=int, default=2)
 parser.add_argument("--footstep_scaling", help="Footstep scaling to be applied to the generated footsteps. Keep it between 0 and 1.",
-                    type=float, default=0.5)
+                    type=float, default=1)
 parser.add_argument("--deactivate_postural", help="Deactivate usage of the postural from Adherent.", action="store_true")
 
 args = parser.parse_args()
@@ -86,7 +86,7 @@ controller = trajectory_controller.TrajectoryController.build(robot_urdf=robot_u
                                                               initial_joint_reference=initial_joint_reference)
 
 # Configure all the components of the trajectory control pipeline
-controller.configure()
+controller.configure(k_com=0.0, k_dcm=0.0, k_zmp=0.0)
 
 # ===================
 # TRAJECTORY PLANNING
