@@ -298,4 +298,4 @@ with tf.Session(config=config) as sess:
         else:
 
             # Slow down visualization
-            time.sleep(0.0001)
+            time.sleep(0.01)
