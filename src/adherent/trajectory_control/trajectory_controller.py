@@ -498,7 +498,7 @@ class FootstepsExtractor:
 
         # Retrieve first left contact position
         ground_l_foot_position = [l_contacts[0]["2D_pos"][0], l_contacts[0]["2D_pos"][1], 0]
-        ground_l_foot_position_gazebo = [0, 0.08, 0]
+        ground_l_foot_position_gazebo = [0, 0.11, 0]
         ground_l_foot_position_offset = np.array(ground_l_foot_position_gazebo) - np.array(ground_l_foot_position)
         ground_l_foot_position += np.array(ground_l_foot_position_offset)
 
@@ -1721,13 +1721,13 @@ class TrajectoryController:
         self.storage.update_right_foot_storage(right_foot_des=self.trajectory_optimization.right_foot_state.transform.translation(),
                                                right_foot_meas_transform=self.kindyn_meas_desc.kindyn.get_world_transform("r_sole"),
                                                right_foot_des_transform=self.kindyn_des_desc.kindyn.get_world_transform("r_sole"),
-                                               right_wrench=self.right_rear_wrench)
+                                               right_wrench=(self.right_rear_wrench+self.right_front_wrench))
 
         # Update left foot storage
         self.storage.update_left_foot_storage(left_foot_des=self.trajectory_optimization.left_foot_state.transform.translation(),
                                               left_foot_meas_transform=self.kindyn_meas_desc.kindyn.get_world_transform("l_sole"),
                                               left_foot_des_transform=self.kindyn_des_desc.kindyn.get_world_transform("l_sole"),
-                                              left_wrench=self.left_rear_wrench)
+                                              left_wrench=(self.left_rear_wrench+self.left_front_wrench))
 
     # =======
     # GETTERS
