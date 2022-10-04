@@ -86,7 +86,7 @@ controller = trajectory_controller.TrajectoryController.build(robot_urdf=robot_u
                                                               initial_joint_reference=initial_joint_reference)
 
 # Configure all the components of the trajectory control pipeline
-controller.configure(k_com=2.0, k_dcm=1.1, k_zmp=0.5)
+controller.configure(k_com=4.0, k_dcm=1.2, k_zmp=1.0)
 
 # ===================
 # TRAJECTORY PLANNING
