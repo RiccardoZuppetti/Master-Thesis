@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Fondazione Istituto Italiano di Tecnologia
 # SPDX-License-Identifier: BSD-3-Clause
-
+import math
 import os
 import json
 import numpy as np
@@ -85,7 +85,7 @@ for generated_joint_postural in generated_joint_posturals:
 
 
 # Select the portion to be plotted
-generated_joint_positions = generated_joint_positions[85:260]
+generated_joint_positions = generated_joint_positions[85:259]
 retargeted_joint_positions = retargeted_joint_positions[12:99]
 
 # Extract plot time (seconds)
@@ -96,6 +96,8 @@ plot_time_retargeted = list(range(len(retargeted_joint_positions)))
 plot_time_retargeted = [(t/50.0) for t in plot_time_retargeted]
 
 for k in joints_to_plot_indexes:
+
+    half_generated_joint_positions = []
 
     plt.figure()
 
@@ -113,6 +115,32 @@ for k in joints_to_plot_indexes:
     title = joints[k].replace("_", " ").upper()
     plt.title(title)
     plt.legend()
+
+    for index in range(len(retargeted_joint_positions_plot)):
+        half_generated_joint_positions.append(generated_joint_positions_plot[index * 2])
+
+    MSE = np.square(np.subtract(half_generated_joint_positions, retargeted_joint_positions_plot)).mean()
+    RMSE = math.sqrt(MSE)
+
+    if k == 6:
+        print('R_HIP_PITCH')
+        print(RMSE)
+        print('*****')
+
+    if k == 9:
+        print('R_KNEE')
+        print(RMSE)
+        print('*****')
+
+    if k == 14:
+        print('TORSO_YAW')
+        print(RMSE)
+        print('*****')
+
+    if k == 28:
+        print('R_ELBOW')
+        print(RMSE)
+        print('*****')
 
 # Plot
 plt.show()
