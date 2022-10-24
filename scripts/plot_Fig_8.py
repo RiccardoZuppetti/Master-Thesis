@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 # =============
 
 # Path to the data for regenerating Fig.8 in the paper
-data_path = "../datasets/inference/fig_8_blending_coefficients/blending_coefficients.txt"
+data_path = "../datasets/inference/blending_coefficients.txt"
 
 # =============
 # RETRIEVE DATA
