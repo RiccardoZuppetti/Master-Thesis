@@ -6,6 +6,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from adherent.trajectory_control.utils import rad2deg
+import simpledtw
 
 # =============
 # CONFIGURATION
@@ -105,9 +106,20 @@ for k in joints_to_plot_indexes:
     retargeted_joint_positions_plot = [rad2deg(elem[k]) for elem in retargeted_joint_positions]
     generated_joint_positions_plot = [rad2deg(elem[k])*0.94 for elem in generated_joint_positions]
 
+    # DTW algorithm
+    matches, cost, mapping_1, mapping_2, matrix = simpledtw.dtw(retargeted_joint_positions_plot, generated_joint_positions_plot)
+
     # Plot retargeted vs (slowed-down) generated joint positions
     plt.plot(plot_time_retargeted, retargeted_joint_positions_plot, 'b', label="Retargeted")
     plt.plot(plot_time_generated, generated_joint_positions_plot, 'r', label="Generated")
+
+    for temp in range(len(matches)):
+        val = matches[temp]
+        point1 = [plot_time_retargeted[val[0]], retargeted_joint_positions_plot[val[0]]]
+        point2 = [plot_time_generated[val[1]], generated_joint_positions_plot[val[1]]]
+        x_values = [point1[0], point2[0]]
+        y_values = [point1[1], point2[1]]
+        plt.plot(x_values, y_values, 'green')
 
     # Plot configuration
     plt.xlabel('time [s]')
@@ -124,22 +136,22 @@ for k in joints_to_plot_indexes:
 
     if k == 6:
         print('R_HIP_PITCH')
-        print(RMSE)
+        print(f'RMSE -> {RMSE}, DTW cost -> {cost}')
         print('*****')
 
     if k == 9:
         print('R_KNEE')
-        print(RMSE)
+        print(f'RMSE -> {RMSE}, DTW cost -> {cost}')
         print('*****')
 
     if k == 14:
         print('TORSO_YAW')
-        print(RMSE)
+        print(f'RMSE -> {RMSE}, DTW cost-> {cost}')
         print('*****')
 
     if k == 28:
         print('R_ELBOW')
-        print(RMSE)
+        print(f'RMSE -> {RMSE}, DTW cost -> {cost}')
         print('*****')
 
 # Plot
