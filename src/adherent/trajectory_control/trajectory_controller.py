@@ -731,7 +731,7 @@ class PosturalExtractor:
 
             # 2 is to go from 50Hz (trajectory generation frequency) to 100Hz (trajectory control frequency),
             # then you need to take into account the time_scaling factor
-            for i in range(2 * self.time_scaling):
+            for i in range(self.time_scaling):
 
                 joint_reference = []
 
@@ -1292,7 +1292,7 @@ class TrajectoryController:
     @staticmethod
     def build(robot_urdf: str, footsteps_path: str, posturals_path: str, storage_path: str, time_scaling: int,
               footstep_scaling: float, feet_frames: Dict, use_joint_references: bool, controlled_joints: List, foot_name_to_index: Dict,
-              initial_joint_reference: List, shoulder_offset: float = 0.15) -> "TrajectoryController":
+              initial_joint_reference: List, shoulder_offset: float = 0.0) -> "TrajectoryController":
         """Build an instance of TrajectoryController."""
 
         mdl_loader = idt.ModelLoader()
