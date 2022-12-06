@@ -21,8 +21,9 @@ parser.add_argument("--trajectory_path", help="Path where the generated trajecto
 parser.add_argument("--time_scaling", help="Time scaling to be applied to the generated trajectory. Keep it integer.",
                     type=int, default=2)
 parser.add_argument("--footstep_scaling", help="Footstep scaling to be applied to the generated footsteps. Keep it between 0 and 1.",
-                    type=float, default=1)
+                    type=float, default=0.5)
 parser.add_argument("--deactivate_postural", help="Deactivate usage of the postural from Adherent.", action="store_true")
+parser.add_argument("--real_robot", help="Use the real iCub.", action="store_true")
 
 args = parser.parse_args()
 
@@ -30,13 +31,21 @@ trajectory_path = args.trajectory_path
 time_scaling = args.time_scaling
 footstep_scaling = args.footstep_scaling
 use_joint_references = not args.deactivate_postural
+real_robot = args.real_robot
+
+# Debug
+print("REAL ROBOT:", real_robot)
+input("Press Enter to continue")
 
 # ==================
 # YARP CONFIGURATION
 # ==================
 
-# YARP initialization
-yarp.Network.init(yarp.YARP_CLOCK_NETWORK)
+# Initialize the Yarp clock
+if real_robot:
+    yarp.Network.init()
+else:
+    yarp.Network.init(yarp.YARP_CLOCK_NETWORK)
 
 # ===================================
 # TRAJECTORY CONTROLLER CONFIGURATION
@@ -56,12 +65,28 @@ posturals_path = trajectory_path + "postural.txt"
 # Define the beginning of the path where the trajectory control data will be stored
 storage_path = os.path.join(script_directory, "../datasets/trajectory_control_simulation/sim_")
 
+# Define the beginning of the path where the trajectory control data will be stored
+if real_robot:
+    storage_path = os.path.join(script_directory, "../datasets/trajectory_control_real_robot/exp_")
+else:
+    storage_path = os.path.join(script_directory, "../datasets/trajectory_control_simulation/sim_")
+
 # Define the joints list used by the different components in the pipeline
 controlled_joints = ['l_hip_pitch', 'l_hip_roll', 'l_hip_yaw', 'l_knee', 'l_ankle_pitch', 'l_ankle_roll',  # left leg
                      'r_hip_pitch', 'r_hip_roll', 'r_hip_yaw', 'r_knee', 'r_ankle_pitch', 'r_ankle_roll',  # right leg
                      'torso_pitch', 'torso_roll', 'torso_yaw',  # torso
                      'l_shoulder_pitch', 'l_shoulder_roll', 'l_shoulder_yaw', 'l_elbow', # left arm
                      'r_shoulder_pitch', 'r_shoulder_roll', 'r_shoulder_yaw', 'r_elbow'] # right arm
+
+# Check that the l_sole and r_sole frames indexes in the model are the correct ones
+# import idyntree.bindings as idt
+# mdl_loader = idt.ModelLoader()
+# mdl_loader.loadReducedModelFromFile(robot_urdf, controlled_joints)
+# model = mdl_loader.model()
+# print("***************")
+# print("l_sole", model.getFrameIndex(frameName="l_sole"))
+# print("r_sole", model.getFrameIndex(frameName="r_sole"))
+# input("If the frames indexes are correct, press Enter to continue")
 
 # Define robot-specific feet mapping between feet frame names and indexes
 foot_name_to_index = define_foot_name_to_index_mapping(robot="iCubV3")
@@ -83,10 +108,34 @@ controller = trajectory_controller.TrajectoryController.build(robot_urdf=robot_u
                                                               use_joint_references=use_joint_references,
                                                               controlled_joints=controlled_joints,
                                                               foot_name_to_index=foot_name_to_index,
-                                                              initial_joint_reference=initial_joint_reference)
+                                                              initial_joint_reference=initial_joint_reference,
+                                                              real_robot=real_robot)
+
+if real_robot:
+
+    # OPEN LOOP
+    k_zmp = 0.0
+    k_dcm = 0.0
+    k_com = 0.0
+
+    # TODO: tune the controller gains for the real robot
+    # CLOSED LOOP
+    # k_zmp = 0.5 # 2.0
+    # k_dcm = 1.1
+    # k_com = 1.0 # 6.0
+
+else:
+
+    k_zmp = 1.0
+    k_dcm = 1.1
+    k_com = 4.0
+
+# Debug
+print("gains - k_zmp: ",k_zmp,"k_com: ",k_com,"k_dcm: ",k_dcm)
+input("If the gains are ok, press Enter to continue")
 
 # Configure all the components of the trajectory control pipeline
-controller.configure(k_com=4.0, k_dcm=1.2, k_zmp=1.0)
+controller.configure(k_zmp=k_zmp, k_com=k_com, k_dcm=k_dcm)
 
 # ===================
 # TRAJECTORY PLANNING

@@ -669,19 +669,19 @@ class FootstepsExtractor:
         # ============================
 
         # Plot unscaled vs scaled footsteps
-        # plt.figure()
-        # plt.plot(unscaled_left_footsteps_x, unscaled_left_footsteps_y, 'r')
-        # plt.plot(unscaled_right_footsteps_x, unscaled_right_footsteps_y, 'r')
-        # plt.scatter(unscaled_left_footsteps_x, unscaled_left_footsteps_y, c='r')
-        # plt.scatter(unscaled_right_footsteps_x, unscaled_right_footsteps_y, c='r')
-        # plt.plot(left_footsteps_x, left_footsteps_y, 'b')
-        # plt.plot(right_footsteps_x, right_footsteps_y, 'b')
-        # plt.scatter(left_footsteps_x, left_footsteps_y, c='b')
-        # plt.scatter(right_footsteps_x, right_footsteps_y, c='b')
-        # plt.title("Unscaled footsteps (red) VS scaled footsteps (blue)")
-        # plt.axis("equal")
-        # plt.show(block=False)
-        # plt.pause(1.0)
+        plt.figure()
+        plt.plot(unscaled_left_footsteps_x, unscaled_left_footsteps_y, 'r')
+        plt.plot(unscaled_right_footsteps_x, unscaled_right_footsteps_y, 'r')
+        plt.scatter(unscaled_left_footsteps_x, unscaled_left_footsteps_y, c='r')
+        plt.scatter(unscaled_right_footsteps_x, unscaled_right_footsteps_y, c='r')
+        plt.plot(left_footsteps_x, left_footsteps_y, 'b')
+        plt.plot(right_footsteps_x, right_footsteps_y, 'b')
+        plt.scatter(left_footsteps_x, left_footsteps_y, c='b')
+        plt.scatter(right_footsteps_x, right_footsteps_y, c='b')
+        plt.title("Unscaled footsteps (red) VS scaled footsteps (blue)")
+        plt.axis("equal")
+        plt.show(block=False)
+        plt.pause(1.0)
 
         # Assign contact list
         phase_list = blf.contacts.ContactPhaseList()
@@ -731,7 +731,8 @@ class PosturalExtractor:
 
             # 2 is to go from 50Hz (trajectory generation frequency) to 100Hz (trajectory control frequency),
             # then you need to take into account the time_scaling factor
-            for i in range(self.time_scaling):
+            # for i in range(2 * self.time_scaling):
+            for i in range(self.time_scaling): # TODO: temporary fix to be investigated
 
                 joint_reference = []
 
@@ -1236,6 +1237,9 @@ class TrajectoryController:
     joints_list: List
     initial_joint_reference: List
 
+    # True if the script is executed on the real robot
+    real_robot: bool
+
     # Components of the trajectory controller
     storage: StorageHandler
     footsteps_extractor: FootstepsExtractor
@@ -1292,7 +1296,7 @@ class TrajectoryController:
     @staticmethod
     def build(robot_urdf: str, footsteps_path: str, posturals_path: str, storage_path: str, time_scaling: int,
               footstep_scaling: float, feet_frames: Dict, use_joint_references: bool, controlled_joints: List, foot_name_to_index: Dict,
-              initial_joint_reference: List, shoulder_offset: float = 0.0) -> "TrajectoryController":
+              initial_joint_reference: List, shoulder_offset: float = 0.0, real_robot: bool = False) -> "TrajectoryController":
         """Build an instance of TrajectoryController."""
 
         mdl_loader = idt.ModelLoader()
@@ -1336,6 +1340,7 @@ class TrajectoryController:
         return TrajectoryController(robot_urdf=robot_urdf,
                                     joints_list=controlled_joints,
                                     initial_joint_reference=initial_joint_reference,
+                                    real_robot=real_robot,
                                     storage=storage,
                                     footsteps_extractor=footsteps_extractor,
                                     postural_extractor=postural_extractor,
@@ -1386,7 +1391,12 @@ class TrajectoryController:
         handler.set_parameter_string("local_prefix", "test_local")
         handler.set_parameter_float("positioning_duration", 3.0)
         handler.set_parameter_float("positioning_tolerance", 0.001)
-        handler.set_parameter_string("robot_name", "icubSim")
+
+        if self.real_robot:
+            handler.set_parameter_string("robot_name", "icub")
+        else:
+            handler.set_parameter_string("robot_name", "icubSim")
+
         if self.use_joint_references:
             handler.set_parameter_float("position_direct_max_admissible_error", 0.25)
         else:
@@ -1660,22 +1670,42 @@ class TrajectoryController:
     def set_current_joint_reference(self, idx):
         """"Set synchronously the joint references to the robot."""
 
+        print("idx=", idx)
+
+        # On the real robot, define a set of intiial references for Position mode control
+        idx_position_direct = 0.5 # TODO: temporary, to be tuned
+
         if idx == 0:
 
-            input("Press enter to start trajectory control (PositionDirect)")
+            input("Press enter to start trajectory control")
+            time.sleep(5) # TODO temporary interval useful to conduct experiments
 
-            # Retrieve the initial time
-            initial_time = yarp.now()
-            print("initial time", initial_time)
-            self.curr_dt = initial_time
+            # On the real robot, set in Position mode the very first reference
+            self.robot_control.set_references(self.joints_values_des.tolist(), blf.robot_interface.IRobotControl.ControlMode.Position)
+            time.sleep(0.05)
 
         else:
 
-            # Set the current reference in PositionDirect mode
-            self.robot_control.set_references(self.joints_values_des.tolist(), blf.robot_interface.IRobotControl.ControlMode.PositionDirect)
+            if idx < idx_position_direct:
 
-            # Synchronization
-            self.curr_dt = synchronize(self.curr_dt, dt=self.dt)
+                # On the real robot, set in Position mode the first references
+                self.robot_control.set_references(self.joints_values_des.tolist(), blf.robot_interface.IRobotControl.ControlMode.Position)
+                time.sleep(0.05)
+
+            else:
+
+                # Switch to PositionDirect mode
+                self.robot_control.set_references(self.joints_values_des.tolist(), blf.robot_interface.IRobotControl.ControlMode.PositionDirect)
+
+                if idx == idx_position_direct:
+
+                    # On the real robot, retrieve the initial time when you start controlling in PositionDirect mode
+                    initial_time = yarp.now()
+                    print("initial time: ", initial_time)
+                    self.curr_dt = initial_time
+
+                # Synchronization
+                self.curr_dt = synchronize(self.curr_dt, dt=self.dt)
 
     # =======
     # STORAGE
