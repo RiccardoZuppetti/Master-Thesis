@@ -121,7 +121,7 @@ def compute_initial_joint_reference(robot: str) -> List:
     elif robot == "iCubV3":
         initial_joint_reference = [-0.1184, 0.0525, 0.0715, -0.0795, -0.0955, -0.0525,  # left leg
                                    -0.1184, 0.0525, 0.0715, -0.0795, -0.0955, -0.0525,  # right leg
-                                   0.3381685919, 0.0, 0.0,  # torso
+                                   0.1, 0.0, 0.0,  # torso
                                    -0.2715, 0.2073, -0.3505, -0.0345,  # left arm
                                    -0.2715, 0.2073, -0.3505, -0.0345]  # right arm
     else:

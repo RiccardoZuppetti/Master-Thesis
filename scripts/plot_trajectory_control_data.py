@@ -15,7 +15,8 @@ import matplotlib.pyplot as plt
 parser = argparse.ArgumentParser()
 
 # Define as default data_path the latest simulation folder in which data have been saved
-list_of_files = glob.glob('../datasets/trajectory_control_simulation/*')
+# list_of_files = glob.glob('../datasets/trajectory_control_simulation/*') # TODO simulation
+list_of_files = glob.glob('../datasets/trajectory_control_real_robot/*') # TODO real robot
 latest_file = max(list_of_files, key=os.path.getctime)
 
 parser.add_argument("--data_path", help="Path where the data are stored. Relative path from the script folder.",

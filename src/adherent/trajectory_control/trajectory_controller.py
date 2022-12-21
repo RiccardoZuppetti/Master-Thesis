@@ -498,7 +498,7 @@ class FootstepsExtractor:
 
         # Retrieve first left contact position
         ground_l_foot_position = [l_contacts[0]["2D_pos"][0], l_contacts[0]["2D_pos"][1], 0]
-        ground_l_foot_position_gazebo = [0, 0.11, 0]
+        ground_l_foot_position_gazebo = [0, 0.11, 0] # TODO: maybe better simmetric on the real robot?
         ground_l_foot_position_offset = np.array(ground_l_foot_position_gazebo) - np.array(ground_l_foot_position)
         ground_l_foot_position += np.array(ground_l_foot_position_offset)
 
@@ -562,6 +562,9 @@ class FootstepsExtractor:
             unscaled_left_footsteps_x.append(ground_l_foot_position[0])
             unscaled_left_footsteps_y.append(ground_l_foot_position[1])
 
+        # Debug
+        print("################################## LEFT CONTACTS")
+
         # Scale contacts
         for i in range(len(l_contacts[1:])):
 
@@ -599,6 +602,9 @@ class FootstepsExtractor:
                 activation_time=l_activation_time,
                 deactivation_time=l_deactivation_time)
 
+            # Debug
+            print(i, l_deactivation_time - l_activation_time)
+
         # ====================
         # SCALE RIGHT CONTACTS
         # ====================
@@ -626,6 +632,9 @@ class FootstepsExtractor:
             unscaled_r_contacts.append(ground_r_foot_position)
             unscaled_right_footsteps_x.append(ground_r_foot_position[0])
             unscaled_right_footsteps_y.append(ground_r_foot_position[1])
+
+        # Debug
+        print("################################## RIGHT CONTACTS")
 
         # Scale contacts
         for i in range(len(r_contacts[1:])):
@@ -663,6 +672,12 @@ class FootstepsExtractor:
                 transform=manif.SE3(position=np.array(ground_r_foot_position), quaternion=r_foot_quat),
                 activation_time=r_activation_time,
                 deactivation_time=r_deactivation_time)
+
+            # Debug
+            print(i, r_deactivation_time - r_activation_time)
+
+        # Debug
+        # input("Footsteps printed, press Enter to continue")
 
         # ============================
         # PLOT AND ASSIGN CONTACT LIST
@@ -948,7 +963,7 @@ class TrajectoryOptimization:
 
         parameters_handler = blf.parameters_handler.StdParametersHandler()
         parameters_handler.set_parameter_float("sampling_time", dt)
-        parameters_handler.set_parameter_float("step_height", 0.02)
+        parameters_handler.set_parameter_float("step_height", 0.03)
         parameters_handler.set_parameter_float("foot_apex_time", 0.4)
         parameters_handler.set_parameter_float("foot_landing_velocity", 0.0)
         parameters_handler.set_parameter_float("foot_landing_acceleration", 0)
@@ -971,10 +986,10 @@ class TrajectoryOptimization:
         handler.set_parameter_int(name="number_of_foot_corners", value=4)
 
         # Foot corners (seen by the planner)
-        handler.set_parameter_vector_float(name="foot_corner_0", value=[0.04, 0.03, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_1", value=[0.04, -0.03, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_2", value=[-0.04, -0.03, 0.0])
-        handler.set_parameter_vector_float(name="foot_corner_3", value=[-0.04, 0.03, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_0", value=[0.01, 0.005, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_1", value=[0.01, -0.005, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_2", value=[-0.01, -0.005, 0.0])
+        handler.set_parameter_vector_float(name="foot_corner_3", value=[-0.01, 0.005, 0.0])
 
         # Set the weights of the cost function
         handler.set_parameter_float(name="omega_dot_weight", value=10.0)
@@ -1034,9 +1049,14 @@ class SimplifiedModelControl:
 
         # DCM instantaneous control law (Eq.1 in the paper)
         self.zmp_pos_des = dcm_pos_des - dcm_vel_des/state.omega - self.k_dcm * (dcm_pos_des - dcm_pos_meas)
+        # self.zmp_pos_des = dcm_pos_des - dcm_vel_des/self.omega - self.k_dcm * (dcm_pos_des - dcm_pos_meas)
+
+        # Debug
+        # print("SELF:",self.omega,"STATE:",state.omega)
 
         # ZMP-CoM control law (Eq.2 in the paper)
-        self.com_velocity_from_dcm = state.omega * (dcm_pos_des - self.com_position)
+        # self.com_velocity_from_dcm = state.omega * (dcm_pos_des - self.com_position)
+        self.com_velocity_from_dcm = self.omega * (dcm_pos_des - self.com_position)
         self.com_velocity = self.com_velocity_from_dcm + \
                             self.k_com * (self.com_position - com_pos_meas) - \
                             self.k_zmp * (self.zmp_pos_des - zmp_pos_meas)
@@ -1400,7 +1420,7 @@ class TrajectoryController:
         if self.use_joint_references:
             handler.set_parameter_float("position_direct_max_admissible_error", 0.25)
         else:
-            handler.set_parameter_float("position_direct_max_admissible_error", 0.15)
+            handler.set_parameter_float("position_direct_max_admissible_error", 0.25)
 
         # Configuration of the device to read left front wrench
         l_front_wrench_handler = blf.parameters_handler.StdParametersHandler()
@@ -1546,8 +1566,15 @@ class TrajectoryController:
     def configure_planners(self) -> None:
         """Setup DCM and swing foot planners."""
 
-        initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
-        initial_com = np.array([0, 0, initial_com[2]])
+        # Enforce fixed desired CoM height on the real robot
+        # initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
+        # initial_com = np.array([0, 0, initial_com[2]])
+        initial_com = np.array([0, 0, 0.575])
+
+        # Debug
+        print("initial_com (planner)", initial_com)
+        # input("Press Enter to continue")
+
         self.trajectory_optimization.configure(contact_phase_list=self.footsteps_extractor.contact_phase_list,
                                                initial_com=initial_com,
                                                dt=self.dt)
@@ -1555,8 +1582,15 @@ class TrajectoryController:
     def configure_controllers(self, k_zmp: float, k_dcm: float, k_com: float) -> None:
         """Setup the instantaneous DCM controller and the ZMP-CoM controller."""
 
-        initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
-        initial_com = np.array([0, 0, initial_com[2]])
+        # Enforce fixed desired CoM height on the real robot
+        # initial_com = self.kindyn_des_desc.kindyn.get_center_of_mass_position()
+        # initial_com = np.array([0, 0, initial_com[2]])
+        initial_com = np.array([0, 0, 0.575])
+
+        # Debug
+        print("initial_com (controller)", initial_com)
+        # input("Press Enter to continue")
+
         self.simplified_model_control = SimplifiedModelControl.build(com_initial_position=initial_com,
                                                                      k_zmp=k_zmp, k_com=k_com, k_dcm=k_dcm)
 
@@ -1628,7 +1662,11 @@ class TrajectoryController:
 
         # Compute measured DCM from measured CoM position and velocity
         dcm_planner_state = self.trajectory_optimization.dcm_planner_state
-        self.dcm_pos_meas = self.com_pos_meas + 1 / dcm_planner_state.omega * self.com_vel_meas
+        # self.dcm_pos_meas = self.com_pos_meas + 1 / dcm_planner_state.omega * self.com_vel_meas
+        self.dcm_pos_meas = self.com_pos_meas + 1 / self.simplified_model_control.omega * self.com_vel_meas
+
+        # Debug
+        # print("DCM PLANNER:",dcm_planner_state.omega)
 
         # Compute desired CoM position
         self.simplified_model_control.advance(state=dcm_planner_state, dt=self.dt, com_pos_meas=self.com_pos_meas,
@@ -1673,12 +1711,12 @@ class TrajectoryController:
         print("idx=", idx)
 
         # On the real robot, define a set of intiial references for Position mode control
-        idx_position_direct = 0.5 # TODO: temporary, to be tuned
+        idx_position_direct = 0.2 # TODO: temporary, to be tuned
 
         if idx == 0:
 
             input("Press enter to start trajectory control")
-            time.sleep(5) # TODO temporary interval useful to conduct experiments
+            time.sleep(10) # TODO temporary interval useful to conduct experiments
 
             # On the real robot, set in Position mode the very first reference
             self.robot_control.set_references(self.joints_values_des.tolist(), blf.robot_interface.IRobotControl.ControlMode.Position)

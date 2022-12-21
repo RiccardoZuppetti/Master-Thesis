@@ -134,16 +134,16 @@ controller = trajectory_controller.TrajectoryController.build(robot_urdf=robot_u
 
 if real_robot:
 
-    # OPEN LOOP
-    k_zmp = 0.0
-    k_dcm = 0.0
-    k_com = 0.0
+    # # OPEN LOOP
+    # k_zmp = 0.0
+    # k_dcm = 0.0
+    # k_com = 0.0
 
     # TODO: tune the controller gains for the real robot
     # CLOSED LOOP
-    # k_zmp = 0.5 # 2.0
-    # k_dcm = 1.1
-    # k_com = 1.0 # 6.0
+    k_zmp = 1.8 # 1.8 walking controller
+    k_dcm = 1.1 # 0.0 walking controller
+    k_com = 5.0 # 5.0 walking controller
 
 else:
 
@@ -191,7 +191,8 @@ for idx in np.arange(start=0, stop=controller.get_trajectory_duration(), step=co
     controller.retrieve_joint_reference()
 
     # Set the joint reference
-    controller.set_current_joint_reference(idx)
+    controller.set_current_joint_reference(idx) # TODO: comment to run the script without sending the references
+    # print("References not sent") # TODO: uncomment if you run the script without sending the references
 
     # Update the storage of the quantities of interest
     controller.update_storage(idx)
