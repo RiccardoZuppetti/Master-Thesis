@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import os
+import time
 import yarp
 import argparse
 import numpy as np
@@ -9,6 +10,7 @@ from adherent.trajectory_control import trajectory_controller
 from adherent.trajectory_control.utils import define_foot_name_to_index_mapping
 from adherent.trajectory_control.utils import compute_initial_joint_reference
 from adherent.data_processing.utils import define_feet_frames_and_links
+import bipedal_locomotion_framework as blf
 
 # ==================
 # USER CONFIGURATION
@@ -46,6 +48,25 @@ if real_robot:
     yarp.Network.init()
 else:
     yarp.Network.init(yarp.YARP_CLOCK_NETWORK)
+
+# Open port for the robot logger
+if real_robot:
+    port = blf.yarp_utilities.BufferedPortVectorsCollection()
+    port.open("/adherent/logger/data:o")
+
+    # Debug
+    # print("port open")
+    # for i in range(10):
+    #     data = port.prepare()
+    #     v1 = np.random.rand(4)
+    #     v2 = np.random.rand(4)
+    #     data.vectors = {"v1": v1, "v2": v2}
+    #     port.write()
+    #     time.sleep(0.1) # Required not to be too fast
+    # port.close()
+    # print("port closed")
+    # input()export $YARP_ROBOT_NAME=iCubGenova09
+
 
 # ===================================
 # TRAJECTORY CONTROLLER CONFIGURATION
@@ -175,5 +196,14 @@ for idx in np.arange(start=0, stop=controller.get_trajectory_duration(), step=co
     # Update the storage of the quantities of interest
     controller.update_storage(idx)
 
+    if real_robot:
+        # Send data to the robot-logger
+        controller.send_data_to_logger(port)
+
 # At the end of the control loop, store the relevant data
 controller.storage.save_data_as_json()
+
+# Close port for robot logger
+if real_robot:
+    port.close()
+

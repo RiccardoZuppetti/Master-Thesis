@@ -1759,6 +1759,52 @@ class TrajectoryController:
                                               left_foot_des_transform=self.kindyn_des_desc.kindyn.get_world_transform("l_sole"),
                                               left_wrench=(self.left_rear_wrench+self.left_front_wrench))
 
+    def send_data_to_logger(self, port) -> None:
+        """Send the quantities of interest to the robot logger."""
+
+        data = port.prepare()
+
+        data.vectors = {
+            # Joints
+            "joints_values_des": self.joints_values_des,
+            "joints_values": self.joints_values,
+            "joints_velocities_des": self.joints_velocities_des,
+            "joints_velocities": self.joints_velocities,
+            # "joint_references": self.postural_extractor.joint_references, # TODO
+            # Legged odometry and fixed foot detector
+            # world_H_base=self.legged_odometry.world_H_base.tolist(),
+            # base_twist=self.legged_odometry.base_twist.tolist(),
+            # fixed_foot_index=self.legged_odometry.fixed_foot_index,
+            # Center of mass
+            "com_pos_des": self.simplified_model_control.com_position,
+            "com_vel_des": self.simplified_model_control.com_velocity,
+            "com_vel_des_from_dcm": self.simplified_model_control.com_velocity_from_dcm,
+            "com_pos_meas": self.com_pos_meas,
+            "com_vel_meas": self.com_vel_meas,
+            "com_pos_error": [self.simplified_model_control.com_pos_error],
+            # Zero-moment point
+            "zmp_pos_des": self.simplified_model_control.zmp_pos_des,
+            "zmp_pos_meas": self.zmp_pos_meas,
+            "zmp_pos_error": [self.simplified_model_control.zmp_pos_error],
+            # Divergent component of motion
+            "dcm_position": self.trajectory_optimization.dcm_planner_state.dcm_position,
+            "dcm_velocity": self.trajectory_optimization.dcm_planner_state.dcm_velocity,
+            "dcm_pos_meas": self.dcm_pos_meas,
+            "dcm_pos_error": [self.simplified_model_control.dcm_pos_error],
+            # Right foot
+            "right_foot_des": self.trajectory_optimization.right_foot_state.transform.translation(),
+            # "right_foot_meas_transform": self.kindyn_meas_desc.kindyn.get_world_transform("r_sole"), # TODO
+            # "right_foot_des_transform": self.kindyn_des_desc.kindyn.get_world_transform("r_sole"), # TODO
+            "right_wrench": self.right_rear_wrench + self.right_front_wrench,
+            # Left foot
+            "left_foot_des": self.trajectory_optimization.left_foot_state.transform.translation(),
+            # "left_foot_meas_transform": self.kindyn_meas_desc.kindyn.get_world_transform("l_sole"), # TODO
+            # "left_foot_des_transform": self.kindyn_des_desc.kindyn.get_world_transform("l_sole"), # TODO
+            "left_wrench": self.left_rear_wrench + self.left_front_wrench,
+        }
+
+        port.write()
+
     # =======
     # GETTERS
     # =======
